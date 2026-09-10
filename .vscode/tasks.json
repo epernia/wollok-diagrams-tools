@@ -1,0 +1,440 @@
+{
+    // Botones de la barra de estado (extensión actboy168.tasks).
+    //
+    // === Cómo se dispara un comando de VS Code desde una tarea ===
+    //
+    // Las tareas sólo saben ejecutar cosas en una shell, así que para invocar un
+    // comando de VS Code hay que usarlo como variable. VS Code ejecuta el comando
+    // para resolver la variable (ahí ocurre el efecto que nos interesa) y después
+    // usa lo que el comando devolvió como texto.
+    //
+    // El problema: si el comando devuelve algo que no es un string, VS Code corta
+    // con "Cannot substitute ... because command did not return a result of type
+    // string". Y "wollok.start.repl" devuelve un objeto (la ejecución de la tarea
+    // que lanza el REPL), así que usarlo directo SIEMPRE falla con ese error.
+    //
+    // La solución es envolverlo en "runCommands", un comando propio de VS Code que
+    // ejecuta una lista de comandos y no devuelve nada. Sin valor de retorno no hay
+    // conflicto de tipos y no aparece el error. Como "runCommands" necesita
+    // argumentos, va declarado abajo en "inputs" (${command:...} no acepta
+    // argumentos; ${input:...} sí).
+    //
+    // Al no devolver nada, la variable queda sin reemplazar y llega literal a la
+    // shell. Por eso el comando de la tarea es un "echo" inofensivo y el argumento
+    // va con "quoting": "strong" (comillas simples), para que la shell lo trate
+    // como texto plano. La terminal queda oculta y se cierra sola.
+    "version": "2.0.0",
+    "tasks": [
+        {
+                "label": "Wait 8 seconds",
+                "type": "shell",
+                "command": "Start-Sleep -Seconds 8",
+                "problemMatcher": [],
+                "options": {
+                        "statusbar": {
+                                "hide": true
+                        }
+                },
+                "presentation": {
+                        "reveal": "never",
+                        "close": true,
+                        "panel": "dedicated"
+                }
+        },
+        {
+                "label": "Wait 6 seconds",
+                "type": "shell",
+                "command": "Start-Sleep -Seconds 6",
+                "problemMatcher": [],
+                "options": {
+                        "statusbar": {
+                                "hide": true
+                        }
+                },
+                "presentation": {
+                        "reveal": "never",
+                        "close": true,
+                        "panel": "dedicated"
+                }
+        },
+        {
+                "label": "TEST: dejar un REPL corriendo",
+                "type": "shell",
+                "command": "echo",
+                "args": [
+                        {
+                                "value": "${input:lanzarReplWollok}",
+                                "quoting": "strong"
+                        }
+                ],
+                "problemMatcher": [],
+                "options": {
+                        "statusbar": {
+                                "hide": true
+                        }
+                },
+                "presentation": {
+                        "reveal": "never",
+                        "close": true,
+                        "panel": "dedicated"
+                }
+        },
+        {
+                "label": "TEST escenario",
+                "dependsOn": [
+                        "Wait 8 seconds",
+                        "Run in REPL",
+                        "Wait 6 seconds",
+                        "Terminate REPL"
+                ],
+                "dependsOrder": "sequence",
+                "problemMatcher": [],
+                "options": {
+                        "statusbar": {
+                                "hide": true
+                        }
+                },
+                "runOptions": {
+                        "runOn": "folderOpen"
+                }
+        },
+        {
+            // Equivale a lo que hace el entorno con Ctrl+R: mata las terminales,
+            // abre una nueva con `wollok repl <archivo>` y a los dos segundos abre
+            // la pestaña del diagrama dinámico apuntando a localhost. Al ser el
+            // comando nativo respeta la configuración del usuario
+            // (wollokLSP.replPortNumber, wollokLSP.dynamicDiagram.*), así que acá
+            // no hay ningún puerto ni URL repetidos.
+            //
+            // Va en DOS pasos porque el REPL del entorno es, a su vez, una tarea de
+            // VS Code, y VS Code no deja correr dos instancias de la misma tarea:
+            // si ya hay un REPL vivo abre el cartel "Select an instance to
+            // terminate" y, como la extensión arma un objeto Task nuevo cada vez
+            // (con otro id interno), la lista sale vacía: "No instance is currently
+            // running". Por eso el primer paso termina el REPL anterior y espera a
+            // que muera, y recién ahí el segundo lanza el nuevo.
+            "label": "Run in REPL",
+            "detail": "Abre el archivo activo en el REPL y muestra el diagrama dinámico",
+            "dependsOn": [
+                "REPL: close previous",
+                "REPL: launch"
+            ],
+            "dependsOrder": "sequence",
+            "options": {
+                "statusbar": {
+                    "label": "$(run) Ejecutar REPL",
+                    "color": "#31cc4b",
+                    "tooltip": "Abrir el archivo actual en el REPL y mostrar el diagrama dinámico."
+                }
+            },
+            "problemMatcher": []
+        },
+        {
+            // El comando que termina las tareas devuelve enseguida, sin esperar a
+            // que la terminal muera de verdad. La espera de esta tarea es la que
+            // garantiza que, cuando arranque el paso 2, VS Code ya se olvidó del
+            // REPL anterior. Termina sólo TAREAS: las terminales que abriste vos a
+            // mano no se tocan.
+            "label": "REPL: close previous",
+            "type": "shell",
+            "command": "Start-Sleep -Milliseconds 900; '${input:cerrarReplAnterior}'",
+            "options": {
+                "statusbar": {
+                    "hide": true
+                }
+            },
+            "runOptions": {
+                "instancePolicy": "terminateOldest"
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "echo": false,
+                "reveal": "never",
+                "panel": "dedicated",
+                "close": true
+            }
+        },
+        {
+            "label": "REPL: launch",
+            "type": "shell",
+            "command": "echo",
+            "args": [
+                {
+                    "value": "${input:lanzarReplWollok}",
+                    "quoting": "strong"
+                }
+            ],
+            "options": {
+                "statusbar": {
+                    "hide": true
+                }
+            },
+            "runOptions": {
+                "instancePolicy": "terminateOldest"
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "echo": false,
+                "reveal": "never",
+                "panel": "dedicated",
+                "close": true
+            }
+        },
+        {
+            // Termina la TAREA del REPL (no sólo su terminal) y cierra la pestaña
+            // del diagrama. Matar la terminal sola dejaba a VS Code creyendo que la
+            // tarea seguía viva, y el siguiente "Run in REPL" chocaba contra eso.
+            "label": "Terminate REPL",
+            "detail": "Cerrar la terminal del REPL y la pestaña del diagrama dinámico.",
+            "type": "shell",
+            "command": "echo",
+            "args": [
+                {
+                    "value": "${input:terminarReplWollok}",
+                    "quoting": "strong"
+                }
+            ],
+            "options": {
+                "statusbar": {
+                    "label": "$(trash) Finalizar REPL",
+                    "color": "#ff0000",
+                    "tooltip": "Cerrar la terminal del REPL y la pestaña del dinámico."
+                }
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "echo": false,
+                "reveal": "never",
+                "panel": "dedicated",
+                "close": true
+            }
+        },
+        // ====================================================================
+        //  Las herramientas de tools/ — todas sobre el ARCHIVO ACTIVO
+        // ====================================================================
+        //
+        // Convención de salida, la misma que ya venía usando el proyecto:
+        //   - Diagramas Estáticos -> al lado del fuente, <archivo>_static.puml/.drawio y .puml
+        //   - Diagrama Dinámico -> al lado del fuente, <archivo>_dynamic.drawio
+        //     (ese nombre lo arma wrepl2drawio solo, por eso esas tareas no llevan -o)
+        //
+        // Los dos generadores de .drawio CONSERVAN las posiciones del archivo
+        // anterior, así que regenerar no pisa lo que acomodaste a mano. Para
+        // recalcular el layout desde cero están las variantes "recalcular
+        // posiciones".
+        //
+        // Los scripts de package.json (uml, uml:puml, uml:objetos, ...) siguen
+        // sirviendo: VS Code los detecta solo y aparecen como "npm: uml" en
+        // "Tareas: Ejecutar tarea".
+        {
+            "label": "Generate Dynamic Diagrams",
+            "detail": "wrepl2drawio: ejecuta el .wrepl y fotografía el ambiente",
+            "type": "shell",
+            "command": "node",
+            "args": [
+                "tools/wrepl2drawio/cli.mjs",
+                "${fileDirname}/${fileBasenameNoExtension}"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "statusbar": {
+                    "label": "$(circle) Diagrama Dinámico",
+                    "color": "#c586c0",
+                    "tooltip": "Corre <archivo>.wrepl y escribe <archivo>_dynamic.drawio"
+                }
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared",
+                "showReuseMessage": false,
+                "clear": true
+            }
+        },
+        {
+            "label": "Dynamic Diagram sequence",
+            "detail": "wrepl2drawio --genseq: una página por paso del .wrepl",
+            "type": "shell",
+            "command": "node",
+            "args": [
+                "tools/wrepl2drawio/cli.mjs",
+                "${fileDirname}/${fileBasenameNoExtension}",
+                "--genseq"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "statusbar": {
+                    "label": "$(list-ordered) Secuencia de DD",
+                    "color": "#ac4da5",
+                    "tooltip": "Secuencia paso a paso a partir de un <archivo>.wlk y <archivo>.wrepl: escribe <archivo>_dynamic_seq.drawio"
+                }
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared",
+                "showReuseMessage": false,
+                "clear": true
+            }
+        },
+        {
+            "label": "Generate Static Diagrams",
+            "detail": "PlantUML + draw.io del archivo .wlk activo",
+            "dependsOn": [
+                //"Generate Static Diagram in PlantUML format",
+                "Generate Static Diagram in draw.io format"
+            ],
+            "dependsOrder": "sequence",
+            "options": {
+                "statusbar": {
+                    "label": "$(symbol-class) Diagrama Estático",
+                    "color": "#569cd6",
+                    "tooltip": "Genera el Diagrama Estático del archivo .wlk activo en formatos: .puml y .drawio"
+                }
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Generate Static Diagram in PlantUML format",
+            "detail": "wollok2puml: es texto, diffea bien en git",
+            "type": "shell",
+            "command": "node",
+            "args": [
+                "tools/wollok2puml/cli.mjs",
+                "${file}",
+                "-o",
+                "${fileDirname}/${fileBasenameNoExtension}_static.puml"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "statusbar": {
+                    "hide": true
+                }
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared",
+                "showReuseMessage": false
+            }
+        },
+        {
+            "label": "Generate Static Diagram in draw.io format",
+            "detail": "wollok2drawio: se acomoda a mano y las posiciones quedan guardadas",
+            "type": "shell",
+            "command": "node",
+            "args": [
+                "tools/wollok2drawio/cli.mjs",
+                "${file}",
+                "-o",
+                "${fileDirname}/${fileBasenameNoExtension}_static.drawio"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "statusbar": {
+                    "hide": true
+                }
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared",
+                "showReuseMessage": false
+            }
+        },
+        {
+            "label": "Generate Static Diagram in draw.io format (recalculate positions)",
+            "detail": "wollok2drawio --relayout: descarta el acomodado a mano",
+            "type": "shell",
+            "command": "node",
+            "args": [
+                "tools/wollok2drawio/cli.mjs",
+                "${file}",
+                "-o",
+                "docs/${fileBasenameNoExtension}-diagrama-de-clases.drawio",
+                "--relayout"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "statusbar": {
+                    "hide": true
+                }
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared",
+                "showReuseMessage": false
+            }
+        },
+        {
+            "label": "Dynamic Diagram (recalculate positions)",
+            "detail": "wrepl2drawio --relayout: descarta el acomodado a mano",
+            "type": "shell",
+            "command": "node",
+            "args": [
+                "tools/wrepl2drawio/cli.mjs",
+                "${fileDirname}/${fileBasenameNoExtension}",
+                "--relayout"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}",
+                "statusbar": {
+                    "hide": true
+                }
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared",
+                "showReuseMessage": false,
+                "clear": true
+            }
+        },
+    ],
+    "inputs": [
+        {
+            "id": "lanzarReplWollok",
+            "type": "command",
+            "command": "runCommands",
+            "args": {
+                "commands": [
+                    "wollok.start.repl"
+                ]
+            }
+        },
+        {
+            "id": "cerrarReplAnterior",
+            "type": "command",
+            "command": "runCommands",
+            "args": {
+                "commands": [
+                    {
+                        "command": "workbench.action.tasks.terminate",
+                        "args": "terminateAll"
+                    }
+                ]
+            }
+        },
+        {
+            "id": "terminarReplWollok",
+            "type": "command",
+            "command": "runCommands",
+            "args": {
+                "commands": [
+                    {
+                        "command": "workbench.action.tasks.terminate",
+                        "args": "terminateAll"
+                    },
+                    "workbench.action.closeActiveEditor"
+                ]
+            }
+        }
+    ]
+}
