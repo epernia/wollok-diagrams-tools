@@ -47,8 +47,8 @@ Idea general:
   DIAGRAMA ESÁTICO (se lee el código)
 
   .wlk ──► wollok-ts ──► AST ──► extract ──► modelo UML ──┬──► render PlantUML ──► .puml
-                                                           │
-                                                           └──► render draw.io ──► .drawio
+                                                          │
+                                                          └──► render draw.io ──► .drawio
 ```
 
 Estructura de archivos y carpetas y su porpósito:

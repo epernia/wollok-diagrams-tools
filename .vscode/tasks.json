@@ -214,9 +214,9 @@
         // ====================================================================
         //
         // Convención de salida, la misma que ya venía usando el proyecto:
-        //   - Diagramas Estáticos -> al lado del fuente, <archivo>_static.puml/.drawio y .puml
         //   - Diagrama Dinámico -> al lado del fuente, <archivo>_dynamic.drawio
-        //     (ese nombre lo arma wrepl2drawio solo, por eso esas tareas no llevan -o)
+        //     (ese nombre lo arma wollokdd2drawio solo, por eso esas tareas no llevan -o)
+        //   - Diagramas Estáticos -> al lado del fuente, <archivo>_static.puml/.drawio y .puml
         //
         // Los dos generadores de .drawio CONSERVAN las posiciones del archivo
         // anterior, así que regenerar no pisa lo que acomodaste a mano. Para
@@ -228,11 +228,11 @@
         // "Tareas: Ejecutar tarea".
         {
             "label": "Generate Dynamic Diagrams",
-            "detail": "wrepl2drawio: ejecuta el .wrepl y fotografía el ambiente",
+            "detail": "wollokdd2drawio: ejecuta el .wrepl y fotografía el ambiente",
             "type": "shell",
             "command": "node",
             "args": [
-                "tools/wrepl2drawio/cli.mjs",
+                "tools/wollokdd2drawio/cli.mjs",
                 "${fileDirname}/${fileBasenameNoExtension}"
             ],
             "options": {
@@ -254,11 +254,11 @@
         },
         {
             "label": "Dynamic Diagram sequence",
-            "detail": "wrepl2drawio --genseq: una página por paso del .wrepl",
+            "detail": "wollokdd2drawio --genseq: una página por paso del .wrepl",
             "type": "shell",
             "command": "node",
             "args": [
-                "tools/wrepl2drawio/cli.mjs",
+                "tools/wollokdd2drawio/cli.mjs",
                 "${fileDirname}/${fileBasenameNoExtension}",
                 "--genseq"
             ],
@@ -298,11 +298,11 @@
         },
         {
             "label": "Generate Static Diagram in PlantUML format",
-            "detail": "wollok2puml: es texto, diffea bien en git",
+            "detail": "wolloksd2puml: es texto, diffea bien en git",
             "type": "shell",
             "command": "node",
             "args": [
-                "tools/wollok2puml/cli.mjs",
+                "tools/wolloksd2puml/cli.mjs",
                 "${file}",
                 "-o",
                 "${fileDirname}/${fileBasenameNoExtension}_static.puml"
@@ -323,11 +323,11 @@
         },
         {
             "label": "Generate Static Diagram in draw.io format",
-            "detail": "wollok2drawio: se acomoda a mano y las posiciones quedan guardadas",
+            "detail": "wolloksd2drawio: se acomoda a mano y las posiciones quedan guardadas",
             "type": "shell",
             "command": "node",
             "args": [
-                "tools/wollok2drawio/cli.mjs",
+                "tools/wolloksd2drawio/cli.mjs",
                 "${file}",
                 "-o",
                 "${fileDirname}/${fileBasenameNoExtension}_static.drawio"
@@ -348,11 +348,11 @@
         },
         {
             "label": "Generate Static Diagram in draw.io format (recalculate positions)",
-            "detail": "wollok2drawio --relayout: descarta el acomodado a mano",
+            "detail": "wolloksd2drawio --relayout: descarta el acomodado a mano",
             "type": "shell",
             "command": "node",
             "args": [
-                "tools/wollok2drawio/cli.mjs",
+                "tools/wolloksd2drawio/cli.mjs",
                 "${file}",
                 "-o",
                 "docs/${fileBasenameNoExtension}-diagrama-de-clases.drawio",
@@ -374,11 +374,11 @@
         },
         {
             "label": "Dynamic Diagram (recalculate positions)",
-            "detail": "wrepl2drawio --relayout: descarta el acomodado a mano",
+            "detail": "wollokdd2drawio --relayout: descarta el acomodado a mano",
             "type": "shell",
             "command": "node",
             "args": [
-                "tools/wrepl2drawio/cli.mjs",
+                "tools/wollokdd2drawio/cli.mjs",
                 "${fileDirname}/${fileBasenameNoExtension}",
                 "--relayout"
             ],

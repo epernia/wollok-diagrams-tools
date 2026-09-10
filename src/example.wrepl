@@ -1,0 +1,5 @@
+const myInstance = new MyClass()
+myInstance.aSet().remove(1)
+myInstance.aSet().remove(2)
+myInstance.aSet().remove(3)
+myInstance.aSet().add(7)

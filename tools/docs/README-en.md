@@ -47,8 +47,8 @@ DYNAMIC DIAGRAM (code execution)
 STATIC DIAGRAM (code reading)
 
 .wlk ──► wollok-ts ──► AST ──► extract ──► UML model ──┬──► render PlantUML ──► .puml
-                                                         │
-                                                         └──► render draw.io ──► .drawio
+                                                       │
+                                                       └──► render draw.io ──► .drawio
 ```
 
 File and folder structure and their purpose:
