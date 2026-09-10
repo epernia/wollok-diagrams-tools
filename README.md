@@ -1,2 +1,4 @@
-# wollok-diagrams-tools
-Dynamic and Static Diagrams for Wollok code
+# Wollok diagrams tools
+Export Dynamic and Static Diagrams for Wollok code (.wlk files).
+
+
