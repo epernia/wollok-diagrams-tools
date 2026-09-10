@@ -1,7 +1,7 @@
 /*
  * Lectura de las posiciones de un .drawio ya existente, para poder regenerarlo
  * sin perder lo que se acomodó a mano. Lo usan las dos herramientas que generan
- * .drawio (el diagrama ´dinámico y el estático).
+ * .drawio (el diagrama dinámico y el estático).
  *
  * La clave del mecanismo no está acá sino en los generadores: emiten ids
  * ESTABLES (el nombre de la entidad, o el camino hasta el objeto). Esta función

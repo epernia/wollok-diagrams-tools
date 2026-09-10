@@ -34,6 +34,39 @@ const shareSomeMessage = (a, b) => {
 	return [...selectorsOf(a)].some((selector) => messages.has(selector))
 }
 
+/*
+ * Las familias de un modelo se calculan UNA sola vez y quedan cacheadas contra
+ * el objeto del modelo.
+ *
+ * No es una optimizacion, es una cuestion de correccion. extract.mjs muta el
+ * modelo despues de armarlo: retargetea las referencias hacia la abstraccion y
+ * con eso reescribe el tipo de los atributos (`celular : samsung` pasa a
+ * `celular : Celular`). Si las familias se recalcularan sobre el modelo ya
+ * mutado, el criterio 3 —que mira justamente esos tipos— dejaria de ver lo que
+ * vio, y quien pregunta despues (el color) obtendria una respuesta distinta de
+ * la que se uso para deducir las interfaces.
+ *
+ * Es un WeakMap para no ensuciar el modelo con un campo que despues habria que
+ * ignorar al serializar.
+ */
+const CACHE = new WeakMap()
+
+/** Los comodines que se saltearon, para poder avisar. Ver el criterio 3. */
+const WILDCARDS = new WeakMap()
+
+/**
+ * Las entidades que ocupan mas de un lugar distinto, con los nombres de esos
+ * lugares. Quedan afuera de las familias por lugar (ver el criterio 3), asi que
+ * conviene avisarlo: es un caso que la herramienta no puede resolver sola pero
+ * vos si, declarando los roles con @UmlImplements.
+ *
+ * @returns Map(nombre de entidad -> [nombres de atributo])
+ */
+export const wildcardsOf = (model) => {
+	familiesOf(model)
+	return WILDCARDS.get(model) ?? new Map()
+}
+
 /**
  * @param model  el que devuelve extractModel
  * @returns Map(nombre de entidad -> nombre del representante de su familia)
@@ -41,6 +74,14 @@ const shareSomeMessage = (a, b) => {
  *          el resultado no depende del orden en que se recorran las relaciones.
  */
 export const familiesOf = (model) => {
+	const cached = CACHE.get(model)
+	if (cached) return cached
+	const computed = computeFamilies(model)
+	CACHE.set(model, computed)
+	return computed
+}
+
+const computeFamilies = (model) => {
 	const entities = model.entities
 	const index = new Map(entities.map((entity, i) => [entity.name, i]))
 	const byName = new Map(entities.map((entity) => [entity.name, entity]))
@@ -89,8 +130,38 @@ export const familiesOf = (model) => {
 			bySlot.set(attribute.name, [...(bySlot.get(attribute.name) ?? []), attribute.type])
 		}
 	}
+	/*
+	 * Un COMODIN ocupa dos lugares distintos a la vez: `satelital` es el `celular`
+	 * de juliana y tambien su `empresa`. Si se lo une por los dos lados hace de
+	 * PUENTE y los dos roles colapsan en una familia sola que no comparte ningun
+	 * mensaje, o sea que el color pasa a decir que un celular y una empresa son
+	 * intercambiables — justo lo contrario de lo que paso.
+	 *
+	 * La causa de fondo es que "ocupar el mismo lugar" NO es transitivo, y
+	 * union-find fuerza la transitividad: samsung ~ satelital por `celular` y
+	 * satelital ~ movistar por `empresa`, pero samsung y movistar no tienen nada
+	 * que ver.
+	 *
+	 * Como el criterio no puede elegir cual de los dos roles es "el" rol —los dos
+	 * son ciertos— no elige ninguno: se saltea al comodin. Queda con su propio
+	 * color y sin interfaz deducida. Es MENOS de lo que se sabe, pero no es
+	 * mentira; y el aviso que sale por consola dice como declararlo a mano.
+	 *
+	 * Propiedad que lo hace barato de aceptar: esto solo puede QUITAR uniones,
+	 * nunca agregar una. Un falso positivo cuesta un color de mas, jamas un color
+	 * que miente.
+	 */
+	const slotsOf = new Map()
+	for (const [slot, types] of bySlot) {
+		// un lugar con un solo inquilino no habla de roles
+		if (new Set(types).size < 2) continue
+		for (const type of new Set(types)) slotsOf.set(type, [...(slotsOf.get(type) ?? []), slot])
+	}
+	const wildcards = new Map([...slotsOf].filter(([, slots]) => slots.length > 1))
+	WILDCARDS.set(model, wildcards)
+
 	for (const types of bySlot.values()) {
-		const distinct = [...new Set(types)]
+		const distinct = [...new Set(types)].filter((type) => !wildcards.has(type))
 		for (let i = 1; i < distinct.length; i++) {
 			if (shareSomeMessage(byName.get(distinct[0]), byName.get(distinct[i]))) {
 				union(distinct[0], distinct[i])

@@ -17,7 +17,7 @@
 import { annotation, arg, isHidden, unknownUmlAnnotations } from './annotations.mjs'
 import { createTypeResolver, isCollectionType, elementTypeOf } from './infer.mjs'
 import { entityNodesOf } from './entities.mjs'
-import { derivedInterfacesOf } from './families.mjs'
+import { derivedInterfacesOf, familiesOf, wildcardsOf } from './families.mjs'
 
 const ENTITY_KINDS = { Class: 'class', Singleton: 'wko', Mixin: 'mixin' }
 
@@ -302,13 +302,29 @@ export const extractModel = (environment, config = {}, options = {}) => {
 	for (const extra of config.relations ?? []) relations.push({ kind: 'association', ...extra })
 	for (const note of config.notes ?? []) notes.push({ position: 'right', ...note })
 
+	const model = { entities, interfaces, relations, notes, warnings }
+
+	// Las familias se calculan ACA, sobre el modelo todavia sin tocar, y quedan
+	// cacheadas contra este objeto (ver families.mjs). Mas abajo el retargeteo
+	// reescribe el tipo de los atributos, y el criterio 3 —que mira justamente
+	// esos tipos— dejaria de ver lo que vio. Congelarlas antes garantiza que el
+	// color y las interfaces deducidas hablen de las MISMAS familias.
+	familiesOf(model)
+
+	// El que ocupa dos lugares distintos queda afuera de las familias por lugar:
+	// no se puede elegir cual de los dos roles es "el" rol. Conviene decirlo, con
+	// la salida a mano incluida.
+	for (const [name, slots] of wildcardsOf(model)) {
+		warnings.push(`${name}: ocupa dos lugares distintos (${slots.join(', ')}), asi que queda fuera de las familias por lugar. Si cumple los dos roles, declaralos con @UmlImplements`)
+	}
+
 	// --- las interfaces que el codigo no declara ---
 	// Van al final, cuando ya estan las entidades y las relaciones: se deducen de
 	// las familias polimorficas (ver families.mjs) y se agregan como una interfaz
 	// mas, con sus realizaciones. De ahi en adelante el resto del pipeline no
 	// distingue si la escribiste vos o la dedujo la herramienta.
 	if (options.deriveInterfaces !== false) {
-		for (const derived of derivedInterfacesOf({ entities, interfaces, relations })) {
+		for (const derived of derivedInterfacesOf(model)) {
 			interfaces.push({
 				kind: 'interface',
 				name: derived.name,
@@ -361,7 +377,7 @@ export const extractModel = (environment, config = {}, options = {}) => {
 		}
 	}
 
-	return { entities, interfaces, relations, notes, warnings }
+	return model
 }
 
 const STRUCTURAL_KINDS = ['inheritance', 'realization', 'mixin']

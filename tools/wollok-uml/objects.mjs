@@ -202,9 +202,10 @@ const familiesOf = (modules, extraUnions = []) => {
 	// los metodos que vienen de Object no distinguen a nadie; los de un object
 	// anonimo si, aunque su modulo se llame wollok.lang.Object#<uuid>
 	const fromLibrary = (fqn) => fqn?.startsWith(WOLLOK_BASE) && !fqn.includes('#')
-	const selectorsOf = (module) => [...new Set((module.allMethods ?? [])
+	const selectorSetOf = (module) => new Set((module?.allMethods ?? [])
 		.filter((method) => !fromLibrary(method.parent?.fullyQualifiedName))
-		.map((method) => `${method.name}/${method.parameters.length}`))].sort().join(',')
+		.map((method) => `${method.name}/${method.parameters.length}`))
+	const selectorsOf = (module) => [...selectorSetOf(module)].sort().join(',')
 
 	const bySelectors = new Map()
 	for (const module of modules) {
@@ -215,9 +216,21 @@ const familiesOf = (modules, extraUnions = []) => {
 	}
 
 	// 3. ocupan el mismo lugar (mismo atributo de la misma clase)
+	// Con el mismo resguardo que usa el modelo de clases: ocupar el mismo lugar
+	// no alcanza si ademas no comparten NINGUN mensaje. Sin el, dos objetos que
+	// pasaron por el mismo atributo sin tener nada que ver entre si quedarian
+	// pintados como intercambiables, que es justo lo que el color no tiene que
+	// decir.
+	const moduleByName = new Map(modules.map((module) => [module.fullyQualifiedName, module]))
+	const shareSomeMessage = (a, b) => {
+		const messages = selectorSetOf(moduleByName.get(b))
+		return [...selectorSetOf(moduleByName.get(a))].some((selector) => messages.has(selector))
+	}
 	for (const slot of extraUnions.values()) {
 		const inhabitants = [...slot].filter((fqn) => parent.has(fqn))
-		for (let i = 1; i < inhabitants.length; i++) union(inhabitants[0], inhabitants[i])
+		for (let i = 1; i < inhabitants.length; i++) {
+			if (shareSomeMessage(inhabitants[0], inhabitants[i])) union(inhabitants[0], inhabitants[i])
+		}
 	}
 
 	return (module) => find(module.fullyQualifiedName)

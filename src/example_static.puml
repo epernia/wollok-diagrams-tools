@@ -1,0 +1,111 @@
+@startuml example_static
+' Generado por tools/wolloksd2puml a partir de: src/example.wlk
+' No editar a mano: volver a generarlo.
+
+skinparam classAttributeIconSize 0
+skinparam shadowing false
+skinparam linetype ortho
+skinparam class {
+    BackgroundColor White
+    BorderColor #34495E
+    ArrowColor #34495E
+    StereotypeFontColor #7F8C8D
+}
+skinparam note {
+    BackgroundColor #FCF3CF
+    BorderColor #B7950B
+}
+
+interface "MyWko" as MyWko <<interface>> {
+    + myPolimorficMethod1() : String
+}
+
+class "myWko1" as myWko1 << (O,#FF7700) WKO >> {
+    + myPolimorficMethod1() : String
+}
+
+class "myWko2" as myWko2 << (O,#FF7700) WKO >> {
+    + myPolimorficMethod1() : String
+}
+
+abstract class "MyAbstractClass" as MyAbstractClass {
+    + myAbstractMethod1()
+}
+
+class "MyClass" as MyClass {
+    + const aConstant : Number = 10
+    + const aList : List<Number>
+    + const aSet : Set<Number>
+    + var aBoolean : Boolean = true
+    - var myWko : MyWko = myWko1
+    --
+    + myAbstractMethod1() : String
+    + showWko() : String
+    + changeWkoBy(newWko)
+}
+
+interface "Celular" as Celular <<interface>> {
+    + llamar(unaDuracion)
+    + bateria() : Number
+}
+
+class "samsung" as samsung << (O,#FF7700) WKO >> {
+    + llamar(unaDuracion)
+    + bateria() : Number
+}
+
+class "iphone" as iphone << (O,#FF7700) WKO >> {
+    + llamar(unaDuracion)
+    + bateria() : Number
+}
+
+interface "Empresa" as Empresa <<interface>> {
+    + cobrar(unaDuracion) : Number
+}
+
+class "movistar" as movistar << (O,#FF7700) WKO >> {
+    + cobrar(unaDuracion) : Number
+}
+
+class "claro" as claro << (O,#FF7700) WKO >> {
+    + cobrar(unaDuracion) : Number
+}
+
+class "satelital" as satelital << (O,#FF7700) WKO >> {
+    + llamar(unaDuracion)
+    + bateria() : Number
+    + cobrar(unaDuracion) : Number
+}
+
+class "juliana" as juliana << (O,#FF7700) WKO >> {
+    - var celular : satelital = satelital
+    - var empresa : satelital = satelital
+    --
+    + usar() : Number
+}
+
+class "catalina" as catalina << (O,#FF7700) WKO >> {
+    - const miList : List<Number>
+    - var celular : Celular = samsung
+    - var empresa : Empresa = movistar
+    --
+    + usar() : Number
+}
+
+' ---------- relaciones ----------
+
+MyClass "1" --> "1" MyWko : myWko
+juliana "1" --> "1" satelital : celular
+juliana "1" --> "1" satelital : empresa
+catalina "1" --> "1" Celular : celular
+catalina "1" --> "1" Empresa : empresa
+
+MyAbstractClass <|-- MyClass
+MyWko <|.. myWko1
+MyWko <|.. myWko2
+Celular <|.. samsung
+Celular <|.. iphone
+Empresa <|.. movistar
+Empresa <|.. claro
+
+@enduml

@@ -69,11 +69,74 @@ const vertex = (id, value, style, geometry, parent = '1') => [
 	'        </mxCell>',
 ]
 
-const edge = (id, value, style, source, target) => [
+const edge = (id, value, style, source, target, waypoint) => [
 	`        <mxCell id="${escapeXml(id)}" value="${escapeXml(value)}" style="${style}" edge="1" parent="1" source="${escapeXml(source)}" target="${escapeXml(target)}">`,
-	'          <mxGeometry relative="1" as="geometry" />',
+	...(waypoint
+		? [
+			'          <mxGeometry relative="1" as="geometry">',
+			'            <Array as="points">',
+			`              <mxPoint x="${waypoint.x}" y="${waypoint.y}" />`,
+			'            </Array>',
+			'          </mxGeometry>',
+		]
+		: ['          <mxGeometry relative="1" as="geometry" />']),
 	'        </mxCell>',
 ]
+
+/** Separación entre dos flechas que unen el mismo par de objetos. */
+const PARALLEL_GAP = 30
+
+/**
+ * Dos referencias pueden unir EL MISMO par de objetos. Pasa siempre que una
+ * colección repite un elemento: en `[1,2,3,3]` los índices 2 y 3 son el MISMO
+ * objeto 3 —Wollok no crea dos— así que salen dos flechas del mismo origen al
+ * mismo destino. Dibujadas rectas se superponen perfectamente y se ve una sola,
+ * con un solo rótulo: el otro índice desaparece.
+ *
+ * Por eso se las abre en abanico. Cada una pasa por un punto corrido
+ * PERPENDICULARMENTE al segmento que une los dos centros, repartido de forma
+ * simétrica: con dos flechas una se va para un lado y la otra para el otro. Como
+ * el estilo lleva `rounded=1`, el quiebre se ve como un arco.
+ *
+ * El rótulo lo pone draw.io en el medio del recorrido, o sea justo en ese punto,
+ * así que los rótulos también quedan separados.
+ *
+ * @param centerOf  (id del objeto) -> { x, y } absoluto, o undefined
+ * @returns Map(indice de la referencia -> punto por el que tiene que pasar)
+ */
+const fanOutParallels = (references, centerOf) => {
+	const groups = new Map()
+	references.forEach((reference, index) => {
+		const key = `${reference.from}|${reference.to}`
+		groups.set(key, [...(groups.get(key) ?? []), index])
+	})
+
+	const waypoints = new Map()
+	for (const indexes of groups.values()) {
+		if (indexes.length < 2) continue
+		const from = centerOf(references[indexes[0]].from)
+		const to = centerOf(references[indexes[0]].to)
+		if (!from || !to) continue
+
+		const [dx, dy] = [to.x - from.x, to.y - from.y]
+		const length = Math.hypot(dx, dy) || 1
+		const perpendicular = { x: -dy / length, y: dx / length }
+		const middle = { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 }
+
+		indexes.forEach((index, i) => {
+			const shift = (i - (indexes.length - 1) / 2) * PARALLEL_GAP
+			// con una cantidad impar, la del medio no se corre: se deja recta en vez
+			// de darle un punto que cae justo sobre la recta y que solo estorbaria
+			// si despues movieras una caja a mano
+			if (!shift) return
+			waypoints.set(index, {
+				x: Math.round(middle.x + perpendicular.x * shift),
+				y: Math.round(middle.y + perpendicular.y * shift),
+			})
+		})
+	}
+	return waypoints
+}
 
 // ---------- la unión de todos los pasos ----------
 
@@ -128,6 +191,16 @@ const buildPage = ({ model, lines, name, index }, { ambiente, positions, globals
 	}
 
 	// --- las referencias entre objetos ---
+	// Las que unen el mismo par de objetos se abren en abanico para que no se
+	// tapen entre ellas (ver fanOutParallels).
+	const centerOf = (id) => {
+		const position = positions.get(id)
+		return position && {
+			x: ambiente.x + position.x + position.width / 2,
+			y: ambiente.y + position.y + position.height / 2,
+		}
+	}
+	const waypoints = fanOutParallels(model.references, centerOf)
 	model.references.forEach((reference, position) => {
 		cells.push(...edge(
 			`edge::${reference.from}::${reference.label || position}::${reference.to}`,
@@ -135,6 +208,7 @@ const buildPage = ({ model, lines, name, index }, { ambiente, positions, globals
 			edgeStyle(reference.constant),
 			objectId(reference.from),
 			objectId(reference.to),
+			waypoints.get(position),
 		))
 	})
 
