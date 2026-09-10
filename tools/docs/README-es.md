@@ -8,9 +8,9 @@ Se desarrollaron las siguientes herramientas para generar :
 
 | Herramienta | Que hace |
 |---|---|
-| [`wollokdd2drawio`](tools/wollokdd2drawio/README.md) | A partir de un archivo `.wlk` y si existe, un archivo `.wrepl` (archivo inventado que contiene una secuencia de programa que uno correría en el REPL) los ejecuta para generar un **Diagrama Dinámico** en formato `.drawio`. Permite generar un único diagrama mostrando "la foto del ambiente completo" al ejecutar todo, o agregando el argumento `--genseq`, genera múltiples páginas con el paso a paso de la ejecución de cada línea, agurpando líneas de código que tengan que ver con la creación de objetos en la misma página. |
-| [`wolloksd2drawio`](tools/wolloksd2drawio/README.md) | Mediante de un archivo `.wlk` genera un **Diagrama Estático** en formato `.drawio`. Si luego se modifica manualmente y se intenta regenerar ejecutando esta herramienta **se mantiene las posiciones que se modificaron manualmente**. |
-| [`wolloksd2puml`](tools/wolloksd2puml/README.md) | Usando de un archivo `.wlk` genera un **Diagrama Estático** en formato `.puml`. Este diagrama es texto y diffea bien en git. Este fomato se usó en algunos de los apuntes de Wollok. |
+| `wollokdd2drawio` | A partir de un archivo `.wlk` y si existe, un archivo `.wrepl` (archivo inventado que contiene una secuencia de programa que uno correría en el REPL) los ejecuta para generar un **Diagrama Dinámico** en formato `.drawio`. Permite generar un único diagrama mostrando "la foto del ambiente completo" al ejecutar todo, o agregando el argumento `--genseq`, genera múltiples páginas con el paso a paso de la ejecución de cada línea, agurpando líneas de código que tengan que ver con la creación de objetos en la misma página. |
+| `wolloksd2drawio` | Mediante de un archivo `.wlk` genera un **Diagrama Estático** en formato `.drawio`. Si luego se modifica manualmente y se intenta regenerar ejecutando esta herramienta **se mantiene las posiciones que se modificaron manualmente**. |
+| `wolloksd2puml` | Usando de un archivo `.wlk` genera un **Diagrama Estático** en formato `.puml`. Este diagrama es texto y diffea bien en git. Este fomato se usó en algunos de los apuntes de Wollok. |
 
 ## Opciones comunes al ejecutarlas
 
@@ -112,12 +112,13 @@ conviene editar:
   - Pertenencia.dificultadBasica: no pude inferir el tipo (usa @UmlType o el diccionario "types")
 ```
 
-## Integración con VSCode
+## Integración en VSCode
 
-Para trabajar mediante VSCode sobre **el \<archivo\>.wlk que tenés abierto y en foco 
-en el editor** se crearon botones en la barra de estado de VS Code, los cuales
-se muestran utilizando la extensión "Taks", y están definidos en
-[`.vscode/tasks.json`](.vscode/tasks.json):
+Primero instala la extensión `Taks`, que permitira ver los sigueintes botones en la status bar:
+
+![vscode integration](img/vscode_integration.png)
+
+Estos botones actuan sobre **el \<archivo\>.wlk que tenés abierto y en foco en el editor**.
 
 | Botón | Qué ejecuta |
 |---|---|
@@ -130,5 +131,8 @@ se muestran utilizando la extensión "Taks", y están definidos en
 
 Los botones que generan los archivos de los diagramas, los generan en la misma ubicación del archivo de código fuente `.wlk`.
 
+Para comprender como se definene estos botones, ver el archivo [`.vscode/tasks.json`](../../.vscode/tasks.json).
+
 Además, desde *Tareas: Ejecutar tarea* existen las variantes sueltas (generar PlantUML),
 las de `--relayout` (que descartan el acomodado manualo y recalculan el layout) y más.
+

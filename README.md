@@ -67,4 +67,8 @@ Draw.io format:
 
 Draw.io format:
 
-![Static Diagram](tools/docs/img/example_sd.png)
+![Static Diagram (drawio)](tools/docs/img/example_sd_drawio.png)
+
+PlantUML format:
+
+![Static Diagram (puml)](tools/docs/img/example_sd_puml.png)

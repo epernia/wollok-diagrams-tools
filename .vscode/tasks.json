@@ -283,7 +283,7 @@
             "label": "Generate Static Diagrams",
             "detail": "PlantUML + draw.io del archivo .wlk activo",
             "dependsOn": [
-                //"Generate Static Diagram in PlantUML format",
+                "Generate Static Diagram in PlantUML format",
                 "Generate Static Diagram in draw.io format"
             ],
             "dependsOrder": "sequence",
