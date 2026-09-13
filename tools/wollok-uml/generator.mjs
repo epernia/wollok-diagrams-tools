@@ -28,6 +28,12 @@ const COMMON_OPTIONS = {
 	// ni color por familia. Es la valvula de escape por si en algun modelo la
 	// heuristica agrupa cosas que no van juntas.
 	'--without-inference': (o) => { o.showFamilies = false },
+	// La paleta, igual que en el diagrama de objetos. Vivian solo en el CLI de
+	// draw.io, y PlantUML los tomaba por nombres de archivo y se caia: el boton
+	// del Estatico, que corre las dos salidas en secuencia, cortaba en la primera.
+	// Si se pasan los dos, vale el ultimo.
+	'--pastelcolors': (o) => { o.palette = 'pastel' },
+	'--colourblind': (o) => { o.palette = 'colourblind' },
 	'--include-tests': (o) => { o.includeTests = true },
 	'-q': (o) => { o.quiet = true },
 	'--quiet': (o) => { o.quiet = true },

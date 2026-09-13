@@ -22,8 +22,8 @@
  *
  * Qué dibuja:
  *   - un rectángulo "Ambiente" con todos los objetos adentro, como elipses;
- *   - las var y const de cada objeto, como flechas salientes con su nombre
- *     (const en rojo, var en verde);
+ *   - las var y const de cada objeto, como flechas salientes con su nombre, en
+ *     negro, con un candado 🔒 pegado al nombre si son const;
  *   - las referencias globales del .wrepl, como texto fuera del ambiente con una
  *     flecha que entra y pincha al objeto;
  *   - los WKO como un círculo que dice "WKO", con su nombre como referencia
@@ -40,9 +40,27 @@
  *   -o, --output <archivo>   .drawio de salida (por defecto: <base>_dynamic.drawio,
  *                            o <base>_dynamic_seq.drawio con --genseq)
  *       --genseq             generar la secuencia paso a paso
+ *       --wkoshowref         dibujar tambien la referencia global de cada WKO,
+ *                            aunque su nombre ya este adentro del ovalo
+ *       --showenv            dibujar el rectangulo del Ambiente
+ *       --hidepadlock        no poner el candado 🔒 en las referencias const
+ *       --refcolors          pintar las referencias: const y nombres de object en
+ *                            rojo, var en verde (por defecto todas en negro)
+ *       --colourblind        colorear por familia polimorfica, con tonos aptos
+ *                            para daltonicos
+ *       --pastelcolors       idem, con la paleta pastel de draw.io
+ *                            (sin ninguno de los dos: wollok light mode, verde lo
+ *                            que trae Wollok y azul lo que escribiste vos)
  *   -t, --title <texto>      nombre de la pestaña del diagrama
- *       --feminine <A,B>     clases que llevan "una" (por defecto se deduce del nombre)
- *       --masculine <A,B>    clases que llevan "un"
+ *       --englang            articulo en ingles delante del nombre de la clase:
+ *                            anEmpresaConEmpleados, aPersona
+ *       --inclusivelang      "une" sin marcar genero: uneEmpresaConEmpleados
+ *       --genderlang         "un"/"una" con el genero inferido de la PRIMERA
+ *                            palabra del nombre: unaEmpresaConEmpleados
+ *                            (sin ninguno de los tres: solo el nombre de la
+ *                            clase, EmpresaConEmpleados)
+ *       --feminine <A,B>     clases que llevan "una"; solo cuenta con --genderlang
+ *       --masculine <A,B>    idem al reves
  *       --relayout           ignorar las posiciones del archivo anterior
  *       --keep-going         seguir aunque alguna línea del .wrepl falle
  *   -q, --quiet              no mostrar advertencias
@@ -73,6 +91,17 @@ const parseArguments = (argv) => {
 			case '--feminine': options.feminine = argv[++i].split(',').map((name) => name.trim()); break
 			case '--masculine': options.masculine = argv[++i].split(',').map((name) => name.trim()); break
 			case '--genseq': options.sequence = true; break
+			case '--wkoshowref': options.showWkoRef = true; break
+			case '--showenv': options.showEnv = true; break
+			case '--hidepadlock': options.hidePadlock = true; break
+			case '--refcolors': options.refColors = true; break
+			// el ultimo que se pase es el que vale
+			case '--pastelcolors': options.palette = 'pastel'; break
+			case '--colourblind': options.palette = 'colourblind'; break
+			// el ultimo que se pase es el que vale
+			case '--englang': options.language = 'english'; break
+			case '--inclusivelang': options.language = 'inclusive'; break
+			case '--genderlang': options.language = 'gendered'; break
 			case '--relayout': options.relayout = true; break
 			case '--keep-going': options.keepGoing = true; break
 			case '-q': case '--quiet': options.quiet = true; break
@@ -176,9 +205,23 @@ const main = async () => {
 	// Con --genseq hace falta una foto del ambiente despues de cada linea, no solo
 	// al final: se saca desde los callbacks de run(). El registro de identidades
 	// hace que un mismo objeto conserve su id entre foto y foto.
-	const genders = { feminine: options.feminine, masculine: options.masculine }
+	const genders = {
+		feminine: options.feminine,
+		masculine: options.masculine,
+		language: options.language ?? 'none',
+	}
 	const registry = createIdentityRegistry()
-	const snapshot = (session) => buildObjectModel(session, { ...genders, registry })
+	/*
+	 * La referencia global de un WKO que se llama igual que su propia caja no se
+	 * dibuja: su nombre ya esta ADENTRO del ovalo, y dibujarla deja dos veces la
+	 * misma palabra unidas por una flecha. Las demas quedan siempre: si el ejemplo
+	 * escribio `const a = miObjeto`, ese "a" es un nombre que solo existe ahi y hay
+	 * que verlo. Con --wkoshowref se dibujan todas.
+	 */
+	const onlyUsefulGlobals = (model) => options.showWkoRef
+		? model
+		: { ...model, globals: model.globals.filter((global) => !global.ownName) }
+	const snapshot = (session) => onlyUsefulGlobals(buildObjectModel(session, { ...genders, registry }))
 
 	let initialModel
 	const steps = []
@@ -218,6 +261,18 @@ const main = async () => {
 		name: options.title ?? `${basename(base)} — Diagrama de objetos`,
 		previousGeometry,
 		colorIndex,
+		showEnv: options.showEnv === true,
+		showPadlock: options.hidePadlock !== true,
+		refColors: options.refColors === true,
+		palette: options.palette,
+		// El ruteo verifica lo que dibuja. Si alguna flecha no encontro por donde
+		// esquivar conviene enterarse: casi siempre quiere decir que el layout dejo
+		// un objeto en un lugar incomodo, y se arregla moviendolo a mano.
+		report: ({ warnings }) => {
+			if (!warnings.length || options.quiet) return
+			console.log(`   ${warnings.length} flecha(s) que no pude desviar:`)
+			for (const warning of warnings) console.log(`     - ${warning}`)
+		},
 		header: [
 			`Generado por tools/wollokdd2drawio a partir de: ${files.map((f) => f.name).join(', ')}`
 				+ (replPath ? ` + ${basename(replPath)}` : ' (sin .wrepl: solo los WKO del modelo)'),

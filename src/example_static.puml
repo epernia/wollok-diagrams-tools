@@ -1,0 +1,58 @@
+@startuml example_static
+' Generado por tools/wolloksd2puml a partir de: src/example.wlk
+' No editar a mano: volver a generarlo.
+
+skinparam classAttributeIconSize 0
+skinparam shadowing false
+skinparam linetype ortho
+skinparam class {
+    BackgroundColor White
+    BorderColor #34495E
+    ArrowColor #34495E
+    StereotypeFontColor #7F8C8D
+}
+skinparam note {
+    BackgroundColor #FCF3CF
+    BorderColor #B7950B
+}
+
+interface "A" as A <<interface>> {
+    + myPolimorficMethod1() : String
+}
+
+class "myWko1" as myWko1 << (O,#FF7700) WKO >> {
+    - var a : A = myWko2
+    --
+    + myPolimorficMethod1() : String
+}
+
+class "myWko2" as myWko2 << (O,#FF7700) WKO >> {
+    + myPolimorficMethod1() : String
+}
+
+abstract class "MyAbstractClass" as MyAbstractClass {
+    + myAbstractMethod1()
+}
+
+class "MyClass" as MyClass {
+    + const aConstant : Number = 10
+    + const aList : List<Number>
+    + const aSet : Set<Number>
+    + var aBoolean : Boolean = true
+    - var myWko : A = myWko1
+    --
+    + myAbstractMethod1() : String
+    + showWko() : String
+    + changeWkoBy(newWko)
+}
+
+' ---------- relaciones ----------
+
+myWko1 "1" --> "1" A : a
+MyClass "1" --> "1" A : myWko
+
+MyAbstractClass <|-- MyClass
+A <|.. myWko1
+A <|.. myWko2
+
+@enduml

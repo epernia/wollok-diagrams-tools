@@ -108,10 +108,10 @@ These buttons operate on **the `<file>.wlk` currently open and in focus in the e
 |---|---|
 | **Run REPL** | Runs the `<file>.wlk` in a Wollok REPL terminal and opens the Dynamic Diagram in the editor |
 | **End REPL** | Closes the REPL terminal process and the tab currently in focus in the editor (usually the Dynamic Diagram, unless changed) |
-| **Dynamic Diagram** | `wrepl2drawio`, which generates a `<file>_dynamic.drawio` |
-| **Dynamic Diagram** | `wrepl2drawio`, which generates a `<file>_dynamic.drawio` |
-| **DD Sequence** | `wrepl2drawio --genseq`, which generates a `<file>_dynamic_seq.drawio` |
-| **Static Diagram** | `wollok2drawio`, to generate a `<file>_static.drawio` |
+| **Dynamic Diagram** | `wollokdd2drawio`, which generates a `<file>_dynamic.drawio` |
+| **Dynamic Diagram** | `wollokdd2drawio`, which generates a `<file>_dynamic.drawio` |
+| **DD Sequence** | `wollokdd2drawio --genseq`, which generates a `<file>_dynamic_seq.drawio` |
+| **Static Diagram** | `wolloksd2drawio`, to generate a `<file>_static.drawio` |
 
 The buttons that generate diagram files create them in the same location as the `.wlk` source code file.
 

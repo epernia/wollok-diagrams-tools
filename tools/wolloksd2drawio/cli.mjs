@@ -24,10 +24,15 @@
  *       --no-attributes        no mostrar atributos
  *       --no-operations        no mostrar metodos
  *       --no-mutability        no mostrar const/var
+ *       --colourblind          colorear por familia polimorfica, con tonos aptos
+ *                              para daltonicos
+ *       --pastelcolors         idem, con la paleta pastel de draw.io
+ *                              (sin ninguno de los dos: wollok light mode, y como
+ *                              aca todas las entidades son tuyas, todas azules)
  *       --include-tests        incluir .wtest y .wpgm
  *   -q, --quiet                no mostrar advertencias
  *
- * La otra salida posible es PlantUML: ver tools/wollok2puml.
+ * La otra salida posible es PlantUML: ver tools/wolloksd2puml.
  */
 
 import { readFile } from 'node:fs/promises'
@@ -66,6 +71,7 @@ runGenerator({
 			showOperations: options.showOperations,
 			showMutability: options.showMutability,
 			showFamilies: options.showFamilies,
+			palette: options.palette,
 			previousGeometry,
 			header: provenanceOf('wolloksd2drawio', files, config),
 		})

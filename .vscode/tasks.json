@@ -93,9 +93,6 @@
                         "statusbar": {
                                 "hide": true
                         }
-                },
-                "runOptions": {
-                        "runOn": "folderOpen"
                 }
         },
         {
@@ -215,8 +212,10 @@
         //
         // Convención de salida, la misma que ya venía usando el proyecto:
         //   - Diagrama Dinámico -> al lado del fuente, <archivo>_dynamic.drawio
-        //     (ese nombre lo arma wollokdd2drawio solo, por eso esas tareas no llevan -o)
-        //   - Diagramas Estáticos -> al lado del fuente, <archivo>_static.puml/.drawio y .puml
+        //     (ese nombre lo arma wollokdd2drawio solo, por eso esas tareas no
+        //     llevan -o).
+        //   - Diagramas Estáticos -> al lado del fuente, 
+        //     <archivo>_static.puml/.drawio y .puml
         //
         // Los dos generadores de .drawio CONSERVAN las posiciones del archivo
         // anterior, así que regenerar no pisa lo que acomodaste a mano. Para
@@ -233,14 +232,43 @@
             "command": "node",
             "args": [
                 "tools/wollokdd2drawio/cli.mjs",
-                "${fileDirname}/${fileBasenameNoExtension}"
+                "${fileDirname}/${fileBasenameNoExtension}",
+                "--showenv",       // Muestra el Ambiente.
+                "--wkoshowref",    // Muestra las referencias a wko.
+                "--refcolors",     // Coloreo de referencias. Pone las referencias
+                                   // const en rojo y las var en verde.
+                //"--hidepadlock", // Oculta el candado de las referencias const.
+                "--genderlang",    // Parámetro para elegirlo que se muestra
+                                   // como nombre dentro de las instancias de
+                                   // las clases:
+                                   //   - Sin parámetro muestra por defecto
+                                   //     solo el nombre de la clase.
+                                   //   - "--englang" agrega "a" o "an" delante.
+                                   //   - "--inclusivelang" agrega "une" delante.
+                                   //   - "--genderlang" agrega "un" o "una"
+                                   //     delante, infiriendo el género.
+                "--pastelcolors"   // Parámetro para elegir la paleta de colores:
+                                   //   - Sin parámetro usa por defecto la paleta
+                                   //     light mode de wollok de 2 colores apta
+                                   //     para daltónicos (objetos del sistema en
+                                   //     verde y los creados por el usuario en
+                                   //     celeste.
+                                   //   - Con parámetros son paletas que agrupan
+                                   //     objetos plimórficos usando el mismo
+                                   //     color (solo si pertenecen a un único 
+                                   //     grupo):
+                                   //       - "--colourblind" usa una paleta apta
+                                   //         para daltónicos pero con más colores
+                                   //         que el default. 
+                                   //       - "--pastelcolors" usa una paleta de
+                                   //         colores pasteles.
             ],
             "options": {
                 "cwd": "${workspaceFolder}",
+                // el botón está en "Dynamic Diagram: generate and open", que
+                // además de generar abre el archivo
                 "statusbar": {
-                    "label": "$(circle) Diagrama Dinámico",
-                    "color": "#c586c0",
-                    "tooltip": "Corre <archivo>.wrepl y escribe <archivo>_dynamic.drawio"
+                    "hide": true
                 }
             },
             "problemMatcher": [],
@@ -250,6 +278,44 @@
                 "panel": "shared",
                 "showReuseMessage": false,
                 "clear": true
+            }
+        },
+        {
+            // Abre el .drawio recién generado. Corre DESPUÉS de la tarea de la que
+            // depende, y sólo si esa terminó bien: si la generación falla no se
+            // abre un archivo viejo.
+            //
+            // Lo abre con `code -r`, la línea de comandos de VS Code, que lo muestra
+            // en esta misma ventana. Pero NO la busca en el PATH: un VS Code
+            // portable (como el de la cátedra) no se agrega nunca al PATH. La saca
+            // de ${execPath}, que es el ejecutable del VS Code que está corriendo
+            // esta tarea; la línea de comandos vive al lado, en bin/code.cmd. Así
+            // funciona con el portable, con uno instalado, y aunque muevas la
+            // carpeta, sin escribir ninguna ruta de esta máquina acá.
+            //
+            // Si por algún motivo no la encuentra, prueba `code` del PATH, y si
+            // tampoco está no falla: no abre nada, y el camino del archivo igual
+            // queda en la salida de la generación, donde se abre con Ctrl+clic.
+            "label": "Dynamic Diagram: generate and open",
+            "detail": "Genera el diagrama dinámico y abre el .drawio",
+            "dependsOn": [
+                "Generate Dynamic Diagrams"
+            ],
+            "type": "shell",
+            "command": "$cli = Join-Path (Split-Path '${execPath}') 'bin/code.cmd'; $f = '${fileDirname}/${fileBasenameNoExtension}_dynamic.drawio'; if (Test-Path $cli) { & $cli -r $f } elseif (Get-Command code -ErrorAction SilentlyContinue) { code -r $f }",
+            "options": {
+                "statusbar": {
+                    "label": "$(circle) Diagrama Dinámico",
+                    "color": "#c586c0",
+                    "tooltip": "Corre <archivo>.wrepl, escribe <archivo>_dynamic.drawio y lo abre"
+                }
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "echo": false,
+                "reveal": "never",
+                "panel": "dedicated",
+                "close": true
             }
         },
         {
@@ -260,14 +326,18 @@
             "args": [
                 "tools/wollokdd2drawio/cli.mjs",
                 "${fileDirname}/${fileBasenameNoExtension}",
-                "--genseq"
+                "--genseq",
+                "--showenv",
+                "--wkoshowref",
+                "--refcolors",
+                "--genderlang",
+                "--pastelcolors"
             ],
             "options": {
                 "cwd": "${workspaceFolder}",
+                // el botón está en "Dynamic Diagram sequence: generate and open"
                 "statusbar": {
-                    "label": "$(list-ordered) Secuencia de DD",
-                    "color": "#ac4da5",
-                    "tooltip": "Secuencia paso a paso a partir de un <archivo>.wlk y <archivo>.wrepl: escribe <archivo>_dynamic_seq.drawio"
+                    "hide": true
                 }
             },
             "problemMatcher": [],
@@ -280,21 +350,72 @@
             }
         },
         {
+            // Abre el .drawio recién generado. Corre DESPUÉS de la tarea de la que
+            // depende, y sólo si esa terminó bien: si la generación falla no se
+            // abre un archivo viejo.
+            //
+            // Lo abre con `code -r`, la línea de comandos de VS Code, que lo muestra
+            // en esta misma ventana. Pero NO la busca en el PATH: un VS Code
+            // portable (como el de la cátedra) no se agrega nunca al PATH. La saca
+            // de ${execPath}, que es el ejecutable del VS Code que está corriendo
+            // esta tarea; la línea de comandos vive al lado, en bin/code.cmd. Así
+            // funciona con el portable, con uno instalado, y aunque muevas la
+            // carpeta, sin escribir ninguna ruta de esta máquina acá.
+            //
+            // Si por algún motivo no la encuentra, prueba `code` del PATH, y si
+            // tampoco está no falla: no abre nada, y el camino del archivo igual
+            // queda en la salida de la generación, donde se abre con Ctrl+clic.
+            "label": "Dynamic Diagram sequence: generate and open",
+            "detail": "Genera la secuencia paso a paso y abre el .drawio",
+            "dependsOn": [
+                "Dynamic Diagram sequence"
+            ],
+            "type": "shell",
+            "command": "$cli = Join-Path (Split-Path '${execPath}') 'bin/code.cmd'; $f = '${fileDirname}/${fileBasenameNoExtension}_dynamic_seq.drawio'; if (Test-Path $cli) { & $cli -r $f } elseif (Get-Command code -ErrorAction SilentlyContinue) { code -r $f }",
+            "options": {
+                "statusbar": {
+                    "label": "$(list-ordered) Secuencia de DD",
+                    "color": "#ac4da5",
+                    "tooltip": "Secuencia paso a paso a partir de un <archivo>.wlk y <archivo>.wrepl: escribe <archivo>_dynamic_seq.drawio y lo abre"
+                }
+            },
+            "problemMatcher": [],
+            "presentation": {
+                "echo": false,
+                "reveal": "never",
+                "panel": "dedicated",
+                "close": true
+            }
+        },
+        {
+            // Genera los dos formatos y después abre el .drawio. Una tarea puede
+            // tener dependsOn Y comando propio: VS Code corre primero las
+            // dependencias, en orden, y recién después el comando. Si alguna
+            // generación falla, no abre nada. Cómo encuentra `code` está explicado
+            // en "Dynamic Diagram: generate and open".
             "label": "Generate Static Diagrams",
-            "detail": "PlantUML + draw.io del archivo .wlk activo",
+            "detail": "PlantUML + draw.io del archivo .wlk activo, y abre el .drawio",
             "dependsOn": [
                 "Generate Static Diagram in PlantUML format",
                 "Generate Static Diagram in draw.io format"
             ],
             "dependsOrder": "sequence",
+            "type": "shell",
+            "command": "$cli = Join-Path (Split-Path '${execPath}') 'bin/code.cmd'; $f = '${fileDirname}/${fileBasenameNoExtension}_static.drawio'; if (Test-Path $cli) { & $cli -r $f } elseif (Get-Command code -ErrorAction SilentlyContinue) { code -r $f }",
             "options": {
                 "statusbar": {
                     "label": "$(symbol-class) Diagrama Estático",
                     "color": "#569cd6",
-                    "tooltip": "Genera el Diagrama Estático del archivo .wlk activo en formatos: .puml y .drawio"
+                    "tooltip": "Genera el Diagrama Estático del archivo .wlk activo en formatos .puml y .drawio, y abre el .drawio"
                 }
             },
-            "problemMatcher": []
+            "problemMatcher": [],
+            "presentation": {
+                "echo": false,
+                "reveal": "never",
+                "panel": "dedicated",
+                "close": true
+            }
         },
         {
             "label": "Generate Static Diagram in PlantUML format",
@@ -305,7 +426,19 @@
                 "tools/wolloksd2puml/cli.mjs",
                 "${file}",
                 "-o",
-                "${fileDirname}/${fileBasenameNoExtension}_static.puml"
+                "${fileDirname}/${fileBasenameNoExtension}_static.puml",
+                "--pastelcolors"   // La paleta, igual que en "Generate Dynamic
+                                   // Diagrams", así los dos diagramas salen del
+                                   // mismo color. Si la cambiás allá, cambiala
+                                   // también acá y en la otra salida del
+                                   // Estático:
+                                   //   - Sin parámetro: wollok light mode, que
+                                   //     en el Estático deja todas las cajas
+                                   //     azules (todas las entidades son tuyas).
+                                   //   - "--colourblind": familias polimórficas
+                                   //     con tonos aptos para daltónicos.
+                                   //   - "--pastelcolors": familias polimórficas
+                                   //     con colores pasteles.
             ],
             "options": {
                 "cwd": "${workspaceFolder}",
@@ -330,7 +463,19 @@
                 "tools/wolloksd2drawio/cli.mjs",
                 "${file}",
                 "-o",
-                "${fileDirname}/${fileBasenameNoExtension}_static.drawio"
+                "${fileDirname}/${fileBasenameNoExtension}_static.drawio",
+                "--pastelcolors"   // La paleta, igual que en "Generate Dynamic
+                                   // Diagrams", así los dos diagramas salen del
+                                   // mismo color. Si la cambiás allá, cambiala
+                                   // también acá y en la otra salida del
+                                   // Estático:
+                                   //   - Sin parámetro: wollok light mode, que
+                                   //     en el Estático deja todas las cajas
+                                   //     azules (todas las entidades son tuyas).
+                                   //   - "--colourblind": familias polimórficas
+                                   //     con tonos aptos para daltónicos.
+                                   //   - "--pastelcolors": familias polimórficas
+                                   //     con colores pasteles.
             ],
             "options": {
                 "cwd": "${workspaceFolder}",

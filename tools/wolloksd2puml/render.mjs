@@ -13,6 +13,8 @@
  *   - visibilidad + para las properties (generan accesores) y - para el resto
  */
 
+import { entityColorsOf } from '../wollok-uml/entity-colors.mjs'
+
 const DEFAULT_SKINPARAMS = [
 	'skinparam classAttributeIconSize 0',
 	'skinparam shadowing false',
@@ -65,7 +67,16 @@ const operationLine = (operation) => {
 	return `    + ${operation.name}(${parameters})${returns}`
 }
 
-const entityBlock = (entity, options) => {
+/*
+ * El color va DESPUES de los estereotipos y antes de la llave, que es donde lo
+ * espera PlantUML: `class "Foo" as Foo <<WKO>> #7CC0D8 {`.
+ *
+ * Solo el relleno. draw.io ademas pinta el borde de cada caja con un tono mas
+ * oscuro; aca el borde queda el mismo para todas (el BorderColor de los
+ * skinparams). La familia la dice el relleno, que es lo que coincide con draw.io
+ * y con el diagrama de objetos.
+ */
+const entityBlock = (entity, options, color) => {
 	// En Wollok una clase es abstracta si le queda algun metodo sin cuerpo.
 	// PlantUML lo dibuja en cursiva, que es la convencion de UML.
 	const keyword = entity.kind === 'interface' ? 'interface'
@@ -84,7 +95,8 @@ const entityBlock = (entity, options) => {
 
 	const body = [...attributes, ...(attributes.length && operations.length ? ['    --'] : []), ...operations]
 
-	const header = `${keyword} "${entity.name}" as ${entity.name}${stereotypes ? ` ${stereotypes}` : ''}`
+	const fill = color ? ` ${color.fill}` : ''
+	const header = `${keyword} "${entity.name}" as ${entity.name}${stereotypes ? ` ${stereotypes}` : ''}${fill}`
 	return body.length ? [`${header} {`, ...body, '}'] : [`${header} { }`]
 }
 
@@ -117,18 +129,22 @@ export const renderPlantUML = (model, options = {}) => {
 	// el archivo se lea en el mismo orden que el codigo.
 	const interfaces = new Map(model.interfaces.map((i) => [i.name, i]))
 	const emitted = new Set()
+	const colors = entityColorsOf(model, {
+		palette: settings.palette ?? 'wollok',
+		showFamilies: settings.showFamilies !== false,
+	})
 
 	for (const entity of model.entities) {
 		for (const name of entity.interfaces) {
 			if (interfaces.has(name) && !emitted.has(name)) {
 				emitted.add(name)
-				lines.push(...entityBlock(interfaces.get(name), settings), '')
+				lines.push(...entityBlock(interfaces.get(name), settings, colors.get(name)), '')
 			}
 		}
-		lines.push(...entityBlock(entity, settings), '')
+		lines.push(...entityBlock(entity, settings, colors.get(entity.name)), '')
 	}
 	for (const [name, iface] of interfaces) {
-		if (!emitted.has(name)) lines.push(...entityBlock(iface, settings), '')
+		if (!emitted.has(name)) lines.push(...entityBlock(iface, settings, colors.get(name)), '')
 	}
 
 	if (model.relations.length) {

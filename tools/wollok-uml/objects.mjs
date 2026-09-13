@@ -16,7 +16,7 @@
  *   {
  *     objects:    [{ id, label, kind, module, className, family }],
  *     references: [{ from, to, label, constant }],   // flechas entre objetos
- *     globals:    [{ name, to, constant }],          // referencias del ambiente
+ *     globals:    [{ name, to, constant, ownName }], // referencias del ambiente
  *     warnings:   [string]
  *   }
  */
@@ -27,7 +27,20 @@ const WOLLOK_BASE = 'wollok.'
 const COLLECTIONS = ['wollok.lang.List', 'wollok.lang.Set', 'wollok.lang.Dictionary']
 const LIST = 'wollok.lang.List'
 
-// ---------- el género de la clase, para "unMensajero" / "unaUbicacion" ----------
+// ---------- el articulo que va adelante del nombre de la clase ----------
+
+/*
+ * Que dice el ovalo de una instancia. Cuatro modos, y por defecto NINGUN articulo:
+ *
+ *   (nada)            EmpresaConEmpleados      solo el nombre de la clase
+ *   --englang         anEmpresaConEmpleados    articulo en ingles
+ *   --inclusivelang   uneEmpresaConEmpleados   sin marcar genero
+ *   --genderlang      unaEmpresaConEmpleados   con el genero inferido
+ *
+ * El articulo va pegado al nombre, sin espacio, que es como se lee un objeto en
+ * un diagrama hecho a mano.
+ */
+export const LANGUAGES = ['none', 'english', 'inclusive', 'gendered']
 
 const FEMININE_ENDINGS = ['a', 'cion', 'sion', 'dad', 'tad', 'tud', 'umbre', 'ez', 'itis', 'esis']
 
@@ -39,16 +52,66 @@ const MASCULINE_EXCEPTIONS = [
 	'fantasma', 'panorama', 'aroma', 'enigma', 'sintoma', 'cometa', 'pijama',
 ]
 
-export const articleFor = (className, { feminine = [], masculine = [] } = {}) => {
-	if (!className) return 'un'
+/*
+ * La PRIMERA palabra del nombre de la clase, que es la que manda el genero.
+ *
+ * `EmpresaConEmpleados` es una empresa, no un empleados: el genero lo pone el
+ * sustantivo con el que arranca el nombre y lo que sigue solo lo califica. Mirar
+ * el nombre completo daba justo lo contrario, porque la heuristica de sufijos
+ * terminaba leyendo la ultima palabra: "...Empleados" no termina en ninguna
+ * terminacion femenina, asi que salia "unEmpresaConEmpleados".
+ *
+ * Se corta la palabra en los tres lugares en que se separan en la practica: el
+ * guion, el guion bajo, y el CamelCase. La primera alternativa de la expresion se
+ * ocupa de las siglas, que son varias mayusculas seguidas: en `HTTPServer` la
+ * primera palabra es `HTTP` y no `H`.
+ */
+const firstWordOf = (className) =>
+	className.split(/[-_]/)[0].match(/^[A-Z]+(?![a-z])|^[A-Za-z][a-z]*/)?.[0] ?? className
+
+/*
+ * "an" antes de vocal y "a" antes de consonante.
+ *
+ * En ingles el articulo lo decide el SONIDO de lo que sigue, no la letra: se dice
+ * "an hour" y "a university". Aca se mira la letra, que es lo unico que se tiene
+ * sin un diccionario de pronunciacion, y para un nombre de clase acierta casi
+ * siempre. Los que falla son los nombres que arrancan con "h" muda o con "u" que
+ * suena "yu", que en un modelo de Wollok practicamente no aparecen.
+ */
+const englishArticleFor = (className) =>
+	('AEIOU'.includes(className[0].toUpperCase()) ? 'an' : 'a')
+
+const genderedArticleFor = (className, { feminine, masculine }) => {
 	if (feminine.includes(className)) return 'una'
 	if (masculine.includes(className)) return 'un'
-	const name = className.toLowerCase()
+	const name = firstWordOf(className).toLowerCase()
 	if (MASCULINE_EXCEPTIONS.includes(name)) return 'un'
 	return FEMININE_ENDINGS.some((ending) => name.endsWith(ending)) ? 'una' : 'un'
 }
 
-/** Mensajero -> unMensajero | Ubicacion -> unaUbicacion */
+/**
+ * @param options.language   uno de LANGUAGES; por defecto 'none', o sea sin articulo
+ * @param options.feminine   clases que llevan "una"; solo cuenta con 'gendered'
+ * @param options.masculine  idem al reves
+ */
+export const articleFor = (className, { feminine = [], masculine = [], language = 'none' } = {}) => {
+	if (!className) return ''
+	switch (language) {
+		case 'english': return englishArticleFor(className)
+		// el inclusivo no es un tercer genero: es no marcarlo, asi que las listas de
+		// genero no tienen nada que decir aca
+		case 'inclusive': return 'une'
+		case 'gendered': return genderedArticleFor(className, { feminine, masculine })
+		default: return ''
+	}
+}
+
+/**
+ * EmpresaConEmpleados, y con articulo segun el modo:
+ * anEmpresaConEmpleados | uneEmpresaConEmpleados | unaEmpresaConEmpleados
+ *
+ * Con 'gendered' el genero sale de la PRIMERA palabra: manda "Empresa".
+ */
 export const instanceLabel = (className, genders) =>
 	`${articleFor(className, genders)}${className ?? 'Objeto'}`
 
@@ -253,7 +316,10 @@ export const createIdentityRegistry = () => ({ byRuntime: new Map(), used: new S
 
 /**
  * Camina el ambiente y arma el modelo de objetos.
+ * @param options.language   uno de LANGUAGES: el articulo que lleva cada instancia
  * @param options.feminine   nombres de clase que llevan "una" aunque la heuristica diga otra cosa
+ *                           (el nombre COMPLETO de la clase, no su primera palabra).
+ *                           Solo cuenta con language 'gendered'.
  * @param options.masculine  idem al reves
  * @param options.registry   createIdentityRegistry(), para una secuencia de fotos
  */
@@ -325,7 +391,11 @@ export const buildObjectModel = ({ interpreter, environment, replPackage }, opti
 
 	for (const root of roots) {
 		const id = register(root.object, sanitize(root.name), `global::${root.name}`)
-		globals.push({ name: root.name, to: id, constant: root.constant })
+		// `ownName` distingue la referencia que NO agrega informacion: la de un WKO
+		// que se llama igual que su propia caja. `const a = samsung` no es de esas,
+		// porque "a" es un nombre que solo existe en el ejemplo.
+		const ownName = root.object.module.kind === 'Singleton' && root.name === root.object.module.name
+		globals.push({ name: root.name, to: id, constant: root.constant, ownName })
 	}
 
 	while (queue.length) {
@@ -350,20 +420,25 @@ export const buildObjectModel = ({ interpreter, environment, replPackage }, opti
 	}
 
 	// Un WKO al que se llego por referencia (por ejemplo console, o uno de otro
-	// archivo) tambien es un objeto con nombre: se le agrega su flecha global,
-	// porque si no queda un ovalo que dice "WKO" y no hay forma de saber cual es.
+	// archivo) tambien es una referencia global del ambiente, aunque no se haya
+	// llegado a el desde una raiz. Queda marcado con ownName, asi el render puede
+	// no dibujarlo: su nombre ya esta adentro del ovalo.
 	const alreadyGlobal = new Set(globals.map((global) => global.to))
 	for (const { id, object } of objects) {
 		if (object.module.kind !== 'Singleton' || alreadyGlobal.has(id)) continue
 		const name = object.module.name
 		if (!name) continue     // un object anonimo no tiene nombre que poner
-		globals.push({ name, to: id, constant: true })
+		globals.push({ name, to: id, constant: true, ownName: true })
 		alreadyGlobal.add(id)
 	}
 
 	// --- etiquetas, tipos y familias ---
 	const familyOf = familiesOf([...modules], slots)
-	const genders = { feminine: options.feminine ?? [], masculine: options.masculine ?? [] }
+	const genders = {
+		feminine: options.feminine ?? [],
+		masculine: options.masculine ?? [],
+		language: options.language ?? 'none',
+	}
 
 	const described = objects.map(({ id, object }) => {
 		const kind = kindOf(object)
@@ -375,9 +450,12 @@ export const buildObjectModel = ({ interpreter, environment, replPackage }, opti
 			className,
 			// un WKO es un objeto como cualquier otro: tambien entra en una familia
 			family: kind === 'instance' || kind === 'wko' ? familyOf(object.module) : kind,
-			// el articulo va para todo lo que es instancia de una clase, incluidas
-			// las de la biblioteca: unList, unSet, unaDate
-			label: kind === 'wko' ? 'WKO'
+			// el articulo, si el modo pide uno, va para todo lo que es instancia de
+			// una clase, incluidas las de la biblioteca: List, aList, uneList, unList
+			// un WKO lleva SU NOMBRE adentro: es lo unico que lo identifica, y
+			// ponerlo aca evita tener la misma palabra dos veces (adentro y como
+			// referencia global afuera)
+			label: kind === 'wko' ? (className ?? 'WKO')
 				: kind === 'null' ? 'null'
 					: kind === 'literal' ? literalLabel(object)
 						: instanceLabel(className, genders),

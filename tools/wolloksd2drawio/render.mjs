@@ -17,48 +17,10 @@
 import { layout, sizeOf, headerHeightOf, rowHeightOf } from './layout.mjs'
 import { routeAll, collisionsOf } from './routing.mjs'
 import { readGeometry } from '../wollok-uml/drawio-merge.mjs'
-import { colorIndexOf } from '../wollok-uml/families.mjs'
-import { colorAt } from '../wollok-uml/palette.mjs'
+import { entityColorsOf } from '../wollok-uml/entity-colors.mjs'
 
 export { readGeometry }
 
-const PALETTE = {
-	class: 'fillColor=#FFFFFF;strokeColor=#34495E;',
-	// el mismo naranja que el spot << (O,#FF7700) WKO >> del PlantUML
-	wko: 'fillColor=#FFE6CC;strokeColor=#D79B00;',
-	interface: 'fillColor=#DAE8FC;strokeColor=#6C8EBF;',
-	mixin: 'fillColor=#E1D5E7;strokeColor=#9673A6;',
-}
-
-/**
- * De que color va cada caja. La regla es una sola: MISMO COLOR = MISMA FAMILIA
- * POLIMORFICA. El que no es polimorfico con nadie tambien recibe su propio
- * color, distinto al de todos los demas.
- *
- * El reparto lo decide el nucleo (families.mjs), no este archivo, y por eso el
- * diagrama de objetos puede elegir exactamente los mismos colores: los dos
- * preguntan lo mismo al mismo lugar.
- *
- * @returns Map(nombre de entidad -> estilo de relleno y borde)
- */
-const familyColorsOf = (model) => {
-	const styleOf = (index) => {
-		const color = colorAt(index)
-		return `fillColor=${color.fill};strokeColor=${color.stroke};`
-	}
-	const colors = new Map()
-	for (const [name, index] of colorIndexOf(model)) colors.set(name, styleOf(index))
-
-	// La caja de una interfaz va del color de quienes la implementan: es la
-	// cabeza de esa familia, no una cosa aparte. Vale igual para las que
-	// declaraste vos y para las que dedujo la herramienta.
-	for (const entity of model.interfaces) {
-		const implementor = model.entities.find((candidate) => candidate.interfaces.includes(entity.name))
-		const style = implementor && colors.get(implementor.name)
-		if (style) colors.set(entity.name, style)
-	}
-	return colors
-}
 
 const STEREOTYPE_LABELS = { class: '«class»', wko: '«WKO»', interface: '«interface»', mixin: '«mixin»' }
 
@@ -148,13 +110,14 @@ const boxOf = (entity, options) => {
 
 // ---------- las celdas ----------
 
-const boxCells = (box, position, familyColors = new Map()) => {
+/** @param colors  Map(nombre -> { fill, stroke }) de entityColorsOf, completo */
+const boxCells = (box, position, colors) => {
 	const title = box.stereotypes.length
 		? `${box.stereotypes.join(' ')}&lt;br&gt;&lt;b&gt;${escapeXml(box.name)}&lt;/b&gt;`
 		: escapeXml(box.name)
 
 	const cells = [
-		`        <mxCell id="${escapeXml(box.name)}" value="${title}" style="${BOX_STYLE}startSize=${box.headerHeight};${familyColors.get(box.name) ?? PALETTE[box.kind] ?? PALETTE.class}" vertex="1" parent="1">`,
+		`        <mxCell id="${escapeXml(box.name)}" value="${title}" style="${BOX_STYLE}startSize=${box.headerHeight};fillColor=${colors.get(box.name).fill};strokeColor=${colors.get(box.name).stroke};" vertex="1" parent="1">`,
 		`          <mxGeometry x="${position.x}" y="${position.y}" width="${box.width}" height="${box.height}" as="geometry" />`,
 		'        </mxCell>',
 	]
@@ -417,11 +380,14 @@ export const renderDrawio = (model, options = {}) => {
 	const collisions = routes.reduce((total, route) => total + collisionsOf(route, rects).length, 0)
 	settings.report?.({ warnings, collisions, edges: routes.length })
 
-	// Un color por familia polimórfica, salvo que se pida lo contrario.
-	const familyColors = settings.showFamilies === false ? new Map() : familyColorsOf(model)
+	// El color de cada caja lo decide el nucleo, igual para draw.io y PlantUML.
+	const colors = entityColorsOf(model, {
+		palette: settings.palette ?? 'wollok',
+		showFamilies: settings.showFamilies !== false,
+	})
 
 	const cells = []
-	for (const box of boxes) cells.push(...boxCells(box, positions.get(box.name), familyColors))
+	for (const box of boxes) cells.push(...boxCells(box, positions.get(box.name), colors))
 	for (const route of routes) cells.push(...edgeCells(route, boxesByName))
 	for (const { note, index, size, position } of notes) {
 		cells.push(...noteCells(note, index, position, size))

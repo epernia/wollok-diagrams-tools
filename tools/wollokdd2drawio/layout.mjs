@@ -60,19 +60,26 @@ const LABEL_HEIGHT = 26
 const LABEL_MIN_WIDTH = 60
 const LABEL_GAP = 60          // separación entre la etiqueta global y el ambiente
 const LABEL_SEPARATION = 14   // entre dos etiquetas del mismo borde
+const PADLOCK_WIDTH = 16      // el candado de las const es más ancho que una letra
 
 /**
- * Los WKO, los booleanos y las colecciones van como círculos: su etiqueta es
- * corta y fija, no hay nada que dimensionar, y se distinguen de un vistazo entre
- * los óvalos de las instancias.
+ * Los booleanos y las colecciones van como círculos: su etiqueta es corta y
+ * fija, no hay nada que dimensionar.
+ *
+ * Los WKO NO: adentro llevan su propio nombre, y de 36 objetos del repo sólo
+ * tres entran en 40 px. Así que son óvalos que crecen a lo ancho manteniendo los
+ * 40 de alto — los cortos (`tom`, `pepe`) siguen saliendo redondos, y los largos
+ * se estiran en vez de desbordarse.
  */
 export const isCircle = (object) =>
-	object.kind === 'wko' || object.kind === 'collection' || object.module === 'wollok.lang.Boolean'
+	object.kind === 'collection' || object.module === 'wollok.lang.Boolean'
 
 const diameterOf = (object) => {
 	if (object.module === 'wollok.lang.Dictionary') return DICTIONARY_CIRCLE
 	return object.kind === 'collection' ? COLLECTION_CIRCLE : WKO_CIRCLE
 }
+
+const isWko = (object) => object.kind === 'wko'
 
 const isNumber = (object) => object.module === 'wollok.lang.Number'
 const isString = (object) => object.module === 'wollok.lang.String'
@@ -86,6 +93,12 @@ export const sizeOf = (object) => {
 	if (isCircle(object)) return { width: diameterOf(object), height: diameterOf(object) }
 
 	const characters = object.label.length
+	// el WKO se dimensiona como un literal que se estira: alto de circulo, ancho
+	// segun el nombre, y nunca menos de 40 para que los cortos queden redondos
+	if (isWko(object)) return {
+		width: flatWidth(characters * CHARACTER_WIDTH + 14),
+		height: FLAT_HEIGHT,
+	}
 	if (isNumber(object)) return {
 		width: flatWidth(FLAT_MIN_WIDTH + Math.max(0, characters - NUMBER_FREE_DIGITS) * NUMBER_PER_DIGIT),
 		height: FLAT_HEIGHT,
@@ -250,6 +263,219 @@ const boundingBox = (points, spacing) => {
 
 // ---------- relajación ----------
 
+/** Cuánto pesa cada defecto al elegir dónde poner un compartido. */
+const THROUGH_PENALTY = 3     // una flecha que parte un objeto al medio
+const CROSSING_PENALTY = 1    // dos flechas que se cruzan
+
+/** Las posiciones que se prueban, como fracción del camino hacia el promedio. */
+const SHARED_CANDIDATES = [0, 0.25, 0.5, 0.75, 1]
+const SHARED_PASSES = 3
+const SWAP_PASSES = 3
+
+const orient = (p, q, r) => Math.sign((q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x))
+
+/** Si dos segmentos se cruzan de verdad (tocarse en una punta no cuenta). */
+const segmentsCross = ([a, b], [c, d]) => {
+	const [o1, o2] = [orient(a, b, c), orient(a, b, d)]
+	const [o3, o4] = [orient(c, d, a), orient(c, d, b)]
+	return o1 !== o2 && o3 !== o4 && o1 !== 0 && o2 !== 0 && o3 !== 0 && o4 !== 0
+}
+
+/**
+ * Si un segmento atraviesa la caja de un objeto. Se compara contra el rectángulo
+ * y no contra la elipse: acá alcanza y es barato, porque esto se llama muchas
+ * veces y sólo sirve para COMPARAR posiciones entre sí, no para decidir el
+ * dibujo final — de eso se encarga routing.mjs, que sí resuelve la elipse.
+ */
+const segmentHitsBox = ([a, b], center, size) => {
+	const [left, right] = [center.x - size.width / 2, center.x + size.width / 2]
+	const [top, bottom] = [center.y - size.height / 2, center.y + size.height / 2]
+	let enter = 0
+	let exit = 1
+	for (const [p, q] of [[-(b.x - a.x), a.x - left], [b.x - a.x, right - a.x],
+		[-(b.y - a.y), a.y - top], [b.y - a.y, bottom - a.y]]) {
+		if (Math.abs(p) < 1e-9) {
+			if (q < 0) return false
+			continue
+		}
+		const t = q / p
+		if (p < 0) enter = Math.max(enter, t)
+		else exit = Math.min(exit, t)
+		if (enter > exit) return false
+	}
+	return exit > 1e-9 && enter < 1 - 1e-9
+}
+
+/** Las referencias que se dibujan como flecha: de un objeto a otro distinto. */
+const linksOf = (model, centers) => model.references
+	.filter((reference) => reference.from !== reference.to
+		&& centers.has(reference.from) && centers.has(reference.to))
+	.map((reference) => [reference.from, reference.to])
+
+/**
+ * Cuántos defectos tiene el dibujo tal como está: flechas que parten un objeto al
+ * medio y flechas que se cruzan. Es la vara con la que se aceptan o se descartan
+ * los movimientos de abajo — ninguno se aplica por parecer buena idea.
+ */
+const scoreOf = (centers, links, spacing) => {
+	const segments = links.map(([from, to]) => [centers.get(from), centers.get(to)])
+	let total = 0
+	for (let i = 0; i < segments.length; i++) {
+		for (const [id, at] of centers) {
+			if (links[i][0] === id || links[i][1] === id) continue
+			if (segmentHitsBox(segments[i], at, spacing.get(id))) total += THROUGH_PENALTY
+		}
+		for (let j = i + 1; j < segments.length; j++) {
+			if (links[i].some((end) => links[j].includes(end))) continue
+			if (segmentsCross(segments[i], segments[j])) total += CROSSING_PENALTY
+		}
+	}
+	return total
+}
+
+/** Un objeto y todo lo que cuelga de él: lo que se mueve junto. */
+const branchOf = (id, centers, children) => {
+	const all = []
+	const queue = [id]
+	while (queue.length) {
+		const current = queue.shift()
+		if (all.includes(current) || !centers.has(current)) continue
+		all.push(current)
+		queue.push(...(children.get(current) ?? []))
+	}
+	return all
+}
+
+const shiftBranch = (branch, centers, dx, dy) => {
+	for (const member of branch) {
+		centers.get(member).x += dx
+		centers.get(member).y += dy
+	}
+}
+
+/**
+ * Acerca los objetos COMPARTIDOS a quienes los referencian.
+ *
+ * El árbol cuelga cada objeto del PRIMERO que lo alcanza, así que uno
+ * referenciado por varios queda pegado a ese y los demás le tiran una flecha
+ * larga que cruza medio dibujo. Y es un caso muy común sin que se note: Wollok no
+ * crea dos números iguales, así que el 4 que es la batería de un celular es EL
+ * MISMO objeto que la batería del otro.
+ *
+ *   antes                          después
+ *   (samsung)--(4)                 (samsung)--(4)--(iphone)
+ *      |          \                    |
+ *   (juliana)      \                (juliana)
+ *      |            \
+ *   (iphone)---------'   <- esta flecha cruzaba todo
+ *
+ * Sólo se mueven los que NO tienen hijos: arrastrar una rama entera desarmaría
+ * el abanico del que cuelga. Y el que quede encimado lo separa pullApart, que
+ * corre justo después.
+ */
+const pullShared = (centers, model, children, spacing) => {
+	const links = linksOf(model, centers)
+	if (!links.length) return
+
+	const referrers = new Map([...centers.keys()].map((id) => [id, new Set()]))
+	for (const [from, to] of links) referrers.get(to).add(from)
+
+	// El que tiene hijos también se puede mover: se translada la RAMA ENTERA, así
+	// el abanico que cuelga de él se mantiene igual y sólo cambia de lugar. Mover
+	// sólo la cabeza sí lo desarmaría.
+	const movable = [...referrers]
+		.filter(([, from]) => from.size > 1)
+		.map(([id, from]) => ({ id, from: [...from], branch: branchOf(id, centers, children) }))
+		// una rama que se lleva medio dibujo no es un ajuste, es otro layout
+		.filter((entry) => entry.branch.length <= Math.max(3, centers.size / 4))
+	if (!movable.length) return
+
+	const score = () => scoreOf(centers, links, spacing)
+
+	for (let pass = 0; pass < SHARED_PASSES; pass++) {
+		let improved = false
+		for (const { id, from, branch } of movable) {
+			const origin = { x: centers.get(id).x, y: centers.get(id).y }
+			const target = from.reduce((sum, other) => {
+				const point = centers.get(other)
+				return { x: sum.x + point.x / from.length, y: sum.y + point.y / from.length }
+			}, { x: 0, y: 0 })
+			const shift = (dx, dy) => shiftBranch(branch, centers, dx, dy)
+
+			let best = { dx: 0, dy: 0, value: score() }
+			let applied = { dx: 0, dy: 0 }
+			for (const fraction of SHARED_CANDIDATES) {
+				if (!fraction) continue
+				const wanted = { dx: (target.x - origin.x) * fraction, dy: (target.y - origin.y) * fraction }
+				shift(wanted.dx - applied.dx, wanted.dy - applied.dy)
+				applied = wanted
+				const value = score()
+				// se acepta sólo si MEJORA: ante empate gana quedarse donde está,
+				// que es la posición que el abanico radial eligió a propósito
+				if (value < best.value) best = { ...wanted, value }
+			}
+			shift(best.dx - applied.dx, best.dy - applied.dy)
+			if (best.dx || best.dy) improved = true
+		}
+		if (!improved) return
+	}
+}
+
+/**
+ * Prueba PERMUTAR dos hermanos del árbol.
+ *
+ * El abanico radial reparte a los hijos en el orden en que los encontró, que no
+ * tiene nada que ver con dónde están los objetos a los que ellos apuntan. A veces
+ * alcanza con cambiar dos de lugar para que dos flechas dejen de cruzarse, y el
+ * dibujo queda igual de ordenado porque los lugares son los mismos.
+ *
+ *   antes                   después
+ *   (a)   (b)               (a)   (b)
+ *     \   /                   |   |
+ *      \ /                    |   |
+ *      / \                    |   |
+ *   (b')  (a')              (a')  (b')
+ *
+ * Cada hermano se lleva su rama entera, y el cambio se acepta sólo si el dibujo
+ * mide mejor.
+ */
+const swapSiblings = (centers, model, children, spacing) => {
+	const links = linksOf(model, centers)
+	if (!links.length) return
+
+	const families = [...children.values()]
+		.filter((siblings) => siblings.length > 1)
+		.map((siblings) => siblings.filter((id) => centers.has(id)))
+	if (!families.length) return
+
+	let best = scoreOf(centers, links, spacing)
+	for (let pass = 0; pass < SWAP_PASSES; pass++) {
+		let improved = false
+		for (const siblings of families) {
+			for (let i = 0; i < siblings.length; i++) {
+				for (let j = i + 1; j < siblings.length; j++) {
+					const [here, there] = [branchOf(siblings[i], centers, children), branchOf(siblings[j], centers, children)]
+					// ramas que se pisan no se pueden permutar de a una
+					if (here.some((id) => there.includes(id))) continue
+					const [from, to] = [centers.get(siblings[i]), centers.get(siblings[j])]
+					const [dx, dy] = [to.x - from.x, to.y - from.y]
+					shiftBranch(here, centers, dx, dy)
+					shiftBranch(there, centers, -dx, -dy)
+					const value = scoreOf(centers, links, spacing)
+					if (value < best) {
+						best = value
+						improved = true
+						continue
+					}
+					shiftBranch(here, centers, -dx, -dy)
+					shiftBranch(there, centers, dx, dy)
+				}
+			}
+		}
+		if (!improved) return
+	}
+}
+
 /** Separa lo que haya quedado encimado, empujando por el eje que menos molesta. */
 const pullApart = (centers, spacing, iterations = 120) => {
 	const ids = [...centers.keys()]
@@ -280,7 +506,7 @@ const pullApart = (centers, spacing, iterations = 120) => {
 
 // ---------- el layout completo ----------
 
-export const layout = (model, previous = new Map()) => {
+export const layout = (model, previous = new Map(), padlock = true) => {
 	const shape = new Map(model.objects.map((object) => [object.id, sizeOf(object)]))
 	const spacing = new Map(model.objects.map((object) => [object.id, spacingSizeOf(object)]))
 
@@ -329,6 +555,13 @@ export const layout = (model, previous = new Map()) => {
 		}
 	}
 
+	// El orden importa: pullShared decide MIDIENDO el dibujo, asi que primero hay
+	// que dejarlo en su forma definitiva (pullApart separa lo encimado), despues
+	// buscar mejores lugares para los compartidos, y volver a separar por si
+	// alguno quedo pegado a un vecino.
+	pullApart(centers, spacing)
+	pullShared(centers, model, children, spacing)
+	swapSiblings(centers, model, children, spacing)
 	pullApart(centers, spacing)
 
 	// --- de centros a esquinas, ya con las posiciones guardadas a mano ---
@@ -360,13 +593,21 @@ export const layout = (model, previous = new Map()) => {
 		height: Math.max(bottom + PADDING, savedAmbiente?.height ?? 0),
 	}
 
-	const globals = placeLabels(model, positions, size, previous, savedAmbiente)
+	const globals = placeLabels(model, positions, size, previous, savedAmbiente, padlock)
 	return { ambiente: globals.ambiente, positions, globals: globals.labels }
 }
 
 // ---------- las etiquetas de las referencias globales ----------
 
-const labelWidthOf = (name) => Math.max(LABEL_MIN_WIDTH, Math.round(name.length * CHARACTER_WIDTH + 12))
+/**
+ * El ancho del rótulo, medido sobre el texto que se va a DIBUJAR. Si lleva candado
+ * hay que sumarlo: no alcanza con `(name + '🔒').length`, porque el emoji ocupa
+ * dos unidades UTF-16 y `length` lo contaría como dos letras.
+ */
+const labelWidthOf = (name, padlocked) => Math.max(
+	LABEL_MIN_WIDTH,
+	Math.round(name.length * CHARACTER_WIDTH + 12) + (padlocked ? PADLOCK_WIDTH : 0),
+)
 
 /** Por qué borde del ambiente conviene que salga: el que tenga más cerca. */
 const closestSide = (target, size) => {
@@ -387,12 +628,13 @@ const closestSide = (target, size) => {
  * queda más cerca de su objeto. Así la flecha es corta y cruza poco: una etiqueta
  * empujada al borde equivocado se lleva la flecha de punta a punta del dibujo.
  */
-const placeLabels = (model, positions, size, previous, savedAmbiente) => {
+const placeLabels = (model, positions, size, previous, savedAmbiente, padlock) => {
 	const bySide = { left: [], right: [], top: [], bottom: [] }
 	for (const global of model.globals) {
 		const target = positions.get(global.to)
 		if (!target) continue
-		bySide[closestSide(target, size)].push({ global, target, width: labelWidthOf(global.name) })
+		const width = labelWidthOf(global.name, padlock && global.constant)
+		bySide[closestSide(target, size)].push({ global, target, width })
 	}
 
 	// A lo largo de cada borde, en el orden en que están sus objetos, corriéndose

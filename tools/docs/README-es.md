@@ -124,10 +124,10 @@ Estos botones actuan sobre **el \<archivo\>.wlk que tenés abierto y en foco en 
 |---|---|
 | **Ejecutar REPL** | Ejecuta el `<archivo>.wlk` en una Terminal REPL de Wollok y abre el Diagrama Dinámico en el editor |
 | **Finalizar REPL** | Cierra proceso de la terminal del REPL y la pestaña en foco en el editor (que normalmente será el Diagrama Dinámico si no se cambió) |
-| **Diagrama Dinámico** | `wrepl2drawio`, que genera un `<archivo>_dynamic.drawio` |
-| **Diagrama Dinámico** | `wrepl2drawio`, que genera un `<archivo>_dynamic.drawio` |
-| **Secuencia de DD** | `wrepl2drawio --genseq`, el cual genera un `<archivo>_dynamic_seq.drawio` |
-| **Diagrama Estático** | `wollok2drawio`, para generar un `<archivo>_static.drawio` |
+| **Diagrama Dinámico** | `wollokdd2drawio`, que genera un `<archivo>_dynamic.drawio` |
+| **Diagrama Dinámico** | `wollokdd2drawio`, que genera un `<archivo>_dynamic.drawio` |
+| **Secuencia de DD** | `wollokdd2drawio --genseq`, el cual genera un `<archivo>_dynamic_seq.drawio` |
+| **Diagrama Estático** | `wolloksd2drawio`, para generar un `<archivo>_static.drawio` |
 
 Los botones que generan los archivos de los diagramas, los generan en la misma ubicación del archivo de código fuente `.wlk`.
 

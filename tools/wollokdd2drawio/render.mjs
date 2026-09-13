@@ -24,10 +24,13 @@
  */
 
 import { layout, isCircle } from './layout.mjs'
+import { routeReferences } from './routing.mjs'
 import { colorsFor } from './colors.mjs'
 
-const CONST_COLOR = '#FF0000'
-const VAR_COLOR = '#009900'
+const PADLOCK = '🔒'
+const REFERENCE_COLOR = '#000000'   // por defecto, toda referencia sale negra
+const CONST_COLOR = '#FF0000'       // con --refcolors: lo que no cambia
+const VAR_COLOR = '#009900'         // con --refcolors: lo que sí cambia
 
 // Todo el diagrama va en 14: objetos, referencias, globales y el ambiente.
 const FONT_SIZE = 14
@@ -39,17 +42,53 @@ const FONT_SIZE = 14
 // coordenadas absolutas.
 const AMBIENTE_STYLE = `rounded=0;whiteSpace=wrap;html=1;verticalAlign=top;align=left;spacingLeft=8;spacingTop=2;fillColor=none;strokeColor=#000000;fontSize=${FONT_SIZE};`
 
-const OBJECT_STYLE = `ellipse;whiteSpace=wrap;html=1;fontSize=${FONT_SIZE};`
+// el grosor del borde de los óvalos y círculos de los objetos, en puntos
+const OBJECT_STROKE = 'strokeWidth=2;'
+const OBJECT_STYLE = `ellipse;whiteSpace=wrap;html=1;fontSize=${FONT_SIZE};${OBJECT_STROKE}`
 // aspect=fixed para que el círculo siga siendo un círculo si lo redimensionás
-const CIRCLE_STYLE = `ellipse;whiteSpace=wrap;html=1;fontSize=${FONT_SIZE};aspect=fixed;`
+const CIRCLE_STYLE = `ellipse;whiteSpace=wrap;html=1;fontSize=${FONT_SIZE};aspect=fixed;${OBJECT_STROKE}`
 const GLOBAL_STYLE = `text;html=1;align=%ALIGN%;verticalAlign=middle;resizable=1;points=[];fontSize=${FONT_SIZE};fontStyle=0;`
+
 const CAPTION_STYLE = `text;html=1;align=left;verticalAlign=top;fontFamily=Courier New;fontSize=${FONT_SIZE};spacingLeft=4;`
 
 const CAPTION_GAP = 22
 const CAPTION_LINE_HEIGHT = 22
 
-const edgeStyle = (constant) => {
-	const color = constant ? CONST_COLOR : VAR_COLOR
+/**
+ * El candado pegado al nombre marca que la referencia es `const`.
+ *
+ * Es el que LLEVA el dato, porque por defecto las referencias son todas negras:
+ * "juliana🔒" dice a la vez quién es y que no va a cambiar, y se lee igual
+ * impreso en blanco y negro o si uno es daltónico. Con --refcolors el color lo
+ * dice también, y con --hidepadlock queda solamente el color.
+ *
+ * El `name &&` es por los rótulos vacíos: los elementos de un Set salen sin
+ * nombre, y un candado solo, sin nada que candar, no diría nada.
+ *
+ * Ojo: esto es el texto DIBUJADO, no el id de la celda. Los ids se arman con el
+ * nombre pelado, que es lo que hace que las posiciones movidas a mano sobrevivan
+ * a prender o apagar el candado.
+ */
+const withPadlock = (name, constant, padlock) => (name && constant && padlock ? `${name}${PADLOCK}` : name)
+
+/**
+ * El color de una referencia, para la flecha y para su nombre, que van siempre
+ * del mismo color.
+ *
+ * Por defecto TODAS son negras. El color ya significa otra cosa en este dibujo:
+ * el relleno de cada objeto dice a qué familia polimórfica pertenece, y pintar
+ * además las flechas competía con eso. La const y la var se distinguen por el
+ * candado, que no gasta color.
+ *
+ * Con --refcolors vuelve la convención vieja: rojo lo que no cambia (una `const`,
+ * o el nombre de un object, que es una const en los hechos) y verde lo que sí
+ * (una `var`).
+ */
+const colorFor = (constant, refColors) =>
+	(refColors ? (constant ? CONST_COLOR : VAR_COLOR) : REFERENCE_COLOR)
+
+const edgeStyle = (constant, refColors) => {
+	const color = colorFor(constant, refColors)
 	return `edgeStyle=none;html=1;rounded=1;endArrow=classic;endFill=1;endSize=8;strokeWidth=1.6;strokeColor=${color};fontColor=${color};fontSize=${FONT_SIZE};labelBackgroundColor=#FFFFFF;`
 }
 
@@ -61,10 +100,11 @@ const escapeXml = (text) => String(text)
 const multiline = (lines) => lines.map(escapeXml).join('&lt;br&gt;')
 
 const objectId = (id) => `obj::${id}`
-const globalId = (name) => `global::${name}`
+const GLOBAL_PREFIX = 'global::'
+const globalId = (name) => `${GLOBAL_PREFIX}${name}`
 
-const vertex = (id, value, style, geometry, parent = '1') => [
-	`        <mxCell id="${escapeXml(id)}" value="${value}" style="${style}" vertex="1" parent="${escapeXml(parent)}">`,
+const vertex = (id, value, style, geometry, parent = '1', visible = true) => [
+	`        <mxCell id="${escapeXml(id)}" value="${value}" style="${style}" vertex="1"${visible ? '' : ' visible="0"'} parent="${escapeXml(parent)}">`,
 	`          <mxGeometry x="${geometry.x}" y="${geometry.y}" width="${geometry.width}" height="${geometry.height}" as="geometry" />`,
 	'        </mxCell>',
 ]
@@ -82,61 +122,6 @@ const edge = (id, value, style, source, target, waypoint) => [
 		: ['          <mxGeometry relative="1" as="geometry" />']),
 	'        </mxCell>',
 ]
-
-/** Separación entre dos flechas que unen el mismo par de objetos. */
-const PARALLEL_GAP = 30
-
-/**
- * Dos referencias pueden unir EL MISMO par de objetos. Pasa siempre que una
- * colección repite un elemento: en `[1,2,3,3]` los índices 2 y 3 son el MISMO
- * objeto 3 —Wollok no crea dos— así que salen dos flechas del mismo origen al
- * mismo destino. Dibujadas rectas se superponen perfectamente y se ve una sola,
- * con un solo rótulo: el otro índice desaparece.
- *
- * Por eso se las abre en abanico. Cada una pasa por un punto corrido
- * PERPENDICULARMENTE al segmento que une los dos centros, repartido de forma
- * simétrica: con dos flechas una se va para un lado y la otra para el otro. Como
- * el estilo lleva `rounded=1`, el quiebre se ve como un arco.
- *
- * El rótulo lo pone draw.io en el medio del recorrido, o sea justo en ese punto,
- * así que los rótulos también quedan separados.
- *
- * @param centerOf  (id del objeto) -> { x, y } absoluto, o undefined
- * @returns Map(indice de la referencia -> punto por el que tiene que pasar)
- */
-const fanOutParallels = (references, centerOf) => {
-	const groups = new Map()
-	references.forEach((reference, index) => {
-		const key = `${reference.from}|${reference.to}`
-		groups.set(key, [...(groups.get(key) ?? []), index])
-	})
-
-	const waypoints = new Map()
-	for (const indexes of groups.values()) {
-		if (indexes.length < 2) continue
-		const from = centerOf(references[indexes[0]].from)
-		const to = centerOf(references[indexes[0]].to)
-		if (!from || !to) continue
-
-		const [dx, dy] = [to.x - from.x, to.y - from.y]
-		const length = Math.hypot(dx, dy) || 1
-		const perpendicular = { x: -dy / length, y: dx / length }
-		const middle = { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 }
-
-		indexes.forEach((index, i) => {
-			const shift = (i - (indexes.length - 1) / 2) * PARALLEL_GAP
-			// con una cantidad impar, la del medio no se corre: se deja recta en vez
-			// de darle un punto que cae justo sobre la recta y que solo estorbaria
-			// si despues movieras una caja a mano
-			if (!shift) return
-			waypoints.set(index, {
-				x: Math.round(middle.x + perpendicular.x * shift),
-				y: Math.round(middle.y + perpendicular.y * shift),
-			})
-		})
-	}
-	return waypoints
-}
 
 // ---------- la unión de todos los pasos ----------
 
@@ -163,8 +148,21 @@ const unionOf = (models) => {
 
 // ---------- una página ----------
 
-const buildPage = ({ model, lines, name, index }, { ambiente, positions, globals, colors }) => {
-	const cells = [...vertex('ambiente', escapeXml('Ambiente'), AMBIENTE_STYLE, ambiente)]
+const buildPage = ({ model, lines, name, index }, { ambiente, positions, globals, colors, showEnv, padlock, refColors, warnings }) => {
+	/*
+	 * El rectangulo del ambiente se dibuja solo con --showenv, pero la celda se
+	 * emite SIEMPRE, invisible cuando no se pide.
+	 *
+	 * No es capricho: es el ANCLA del merge. Los objetos se guardan con
+	 * coordenadas absolutas y el layout trabaja en coordenadas relativas al
+	 * ambiente, asi que al regenerar hay que restarle su origen; y ademas, si
+	 * moviste el rectangulo a mano, es ahi donde quedo anotado. Si la celda
+	 * desapareciera del archivo, cada regeneracion correria todo un poco.
+	 *
+	 * Con visible="0" draw.io no lo dibuja ni lo deja seleccionar, y readGeometry
+	 * lo sigue leyendo.
+	 */
+	const cells = [...vertex('ambiente', escapeXml('Ambiente'), AMBIENTE_STYLE, ambiente, '1', showEnv === true)]
 
 	// --- los objetos, dibujados adentro del rectángulo ---
 	// El layout los ubica relativos al ambiente; acá se pasan a absolutos, porque
@@ -179,33 +177,58 @@ const buildPage = ({ model, lines, name, index }, { ambiente, positions, globals
 			{ ...position, x: ambiente.x + position.x, y: ambiente.y + position.y }))
 	}
 
-	// --- las referencias globales: un texto afuera y una flecha que entra ---
-	for (const global of model.globals) {
-		const position = globals.get(global.name)
-		if (!position) continue
-		const color = global.constant ? CONST_COLOR : VAR_COLOR
-		const style = GLOBAL_STYLE.replace('%ALIGN%', position.align ?? 'left')
-		cells.push(...vertex(globalId(global.name), escapeXml(global.name), `${style}fontColor=${color};`, position))
-		cells.push(...edge(`edge::global::${global.name}`, '', edgeStyle(global.constant),
-			globalId(global.name), objectId(global.to)))
-	}
-
-	// --- las referencias entre objetos ---
-	// Las que unen el mismo par de objetos se abren en abanico para que no se
-	// tapen entre ellas (ver fanOutParallels).
+	// --- el ruteo ---
+	// Se calcula de una sola vez para TODAS las flechas —las de entre objetos y
+	// las que entran desde un nombre global—, porque las dos cruzan el mismo
+	// dibujo y tienen que esquivar los mismos objetos (ver routing.mjs).
 	const centerOf = (id) => {
 		const position = positions.get(id)
-		return position && {
-			x: ambiente.x + position.x + position.width / 2,
-			y: ambiente.y + position.y + position.height / 2,
+		if (position) {
+			return {
+				x: ambiente.x + position.x + position.width / 2,
+				y: ambiente.y + position.y + position.height / 2,
+			}
 		}
+		// un nombre global vive afuera del ambiente, en coordenadas absolutas
+		const label = globals.get(id.startsWith(GLOBAL_PREFIX) ? id.slice(GLOBAL_PREFIX.length) : id)
+		return label && { x: label.x + label.width / 2, y: label.y + label.height / 2 }
 	}
-	const waypoints = fanOutParallels(model.references, centerOf)
+	const shapes = model.objects.flatMap((object) => {
+		const center = centerOf(object.id)
+		if (!center) return []
+		const position = positions.get(object.id)
+		return [{ id: object.id, ...center, width: position.width, height: position.height, ellipse: isCircle(object) }]
+	})
+	// primero las referencias y despues las globales: asi el indice de una
+	// referencia sigue siendo su posicion en model.references
+	const globalEdges = model.globals
+		.filter((global) => globals.has(global.name))
+		.map((global) => ({ from: `${GLOBAL_PREFIX}${global.name}`, to: global.to, global }))
+	const { waypoints, stubborn } = routeReferences([...model.references, ...globalEdges], centerOf, shapes)
+
+	// --- las referencias globales: un texto afuera y una flecha que entra ---
+	globalEdges.forEach(({ global }, index) => {
+		const position = globals.get(global.name)
+		const color = colorFor(global.constant, refColors)
+		const style = GLOBAL_STYLE.replace('%ALIGN%', position.align ?? 'left')
+		const name = withPadlock(global.name, global.constant, padlock)
+		cells.push(...vertex(globalId(global.name), escapeXml(name), `${style}fontColor=${color};`, position))
+		cells.push(...edge(`edge::global::${global.name}`, '', edgeStyle(global.constant, refColors),
+			globalId(global.name), objectId(global.to), waypoints.get(model.references.length + index)))
+	})
+
+	// --- las referencias entre objetos ---
+	for (const index of stubborn) {
+		const reference = model.references[index]
+		// Todas las páginas comparten un layout, así que el mismo caso aparecería
+		// una vez por página: se avisa una sola.
+		warnings?.add(`${reference.from} -> ${reference.to}${reference.label ? ` (${reference.label})` : ''}: no encontré por dónde esquivarla sin dar una vuelta enorme, así que queda cruzando algún objeto`)
+	}
 	model.references.forEach((reference, position) => {
 		cells.push(...edge(
 			`edge::${reference.from}::${reference.label || position}::${reference.to}`,
-			reference.label,
-			edgeStyle(reference.constant),
+			withPadlock(reference.label, reference.constant, padlock),
+			edgeStyle(reference.constant, refColors),
 			objectId(reference.from),
 			objectId(reference.to),
 			waypoints.get(position),
@@ -262,13 +285,28 @@ export const renderPages = (pages, options = {}) => {
 	// Un solo layout y una sola paleta para todas las páginas: así los objetos no
 	// se mueven ni cambian de color de un paso al siguiente.
 	const union = unionOf(pages.map((page) => page.model))
-	const placement = { ...layout(union, previous), colors: colorsFor(union, settings.colorIndex) }
+	const routingWarnings = new Set()
+	// El layout también tiene que saberlo: el candado ensancha el rótulo, y de ese
+	// ancho dependen la separación entre dos rótulos del mismo borde y el lugar que
+	// el ambiente les deja.
+	const padlock = settings.showPadlock !== false
+	const placement = {
+		...layout(union, previous, padlock),
+		colors: colorsFor(union, settings.colorIndex, { palette: settings.palette }),
+		showEnv: settings.showEnv === true,
+		padlock,
+		refColors: settings.refColors === true,
+		warnings: routingWarnings,
+	}
+
+	const pageCells = pages.flatMap((page, index) => buildPage({ ...page, index: index + 1 }, placement))
+	if (routingWarnings.size) settings.report?.({ warnings: [...routingWarnings] })
 
 	return [
 		'<?xml version="1.0" encoding="UTF-8"?>',
 		...settings.header.map((line) => `<!-- ${line} -->`),
 		'<mxfile host="wollokdd2drawio" type="device" compressed="false">',
-		...pages.flatMap((page, index) => buildPage({ ...page, index: index + 1 }, placement)),
+		...pageCells,
 		'</mxfile>',
 	].join('\n') + '\n'
 }
