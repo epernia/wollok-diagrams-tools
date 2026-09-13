@@ -237,16 +237,15 @@
                 "--wkoshowref",    // Muestra las referencias a wko.
                 "--refcolors",     // Coloreo de referencias. Pone las referencias
                                    // const en rojo y las var en verde.
-                //"--hidepadlock", // Oculta el candado de las referencias const.
-                "--genderlang",    // Parámetro para elegirlo que se muestra
-                                   // como nombre dentro de las instancias de
-                                   // las clases:
+                "--hidepadlock",   // Oculta el candado de las referencias const.
+                "--genderlang",    // Parámetro que controla como se muestra nombre
+                                   // dentro de las instancias de las clases:
                                    //   - Sin parámetro muestra por defecto
                                    //     solo el nombre de la clase.
                                    //   - "--englang" agrega "a" o "an" delante.
-                                   //   - "--inclusivelang" agrega "une" delante.
                                    //   - "--genderlang" agrega "un" o "una"
                                    //     delante, infiriendo el género.
+                                   //   - "--inclusivelang" agrega "une" delante.
                 "--pastelcolors"   // Parámetro para elegir la paleta de colores:
                                    //   - Sin parámetro usa por defecto la paleta
                                    //     light mode de wollok de 2 colores apta
