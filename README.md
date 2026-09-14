@@ -62,7 +62,7 @@ node ./tools/wollokdd2drawio/cli.mjs ./src/example
 ![Dynamic Diagram](tools/docs/img/example_dd.png)
 
 ```
-node ./tools/wollokdd2drawio/cli.mjs ./src/example --showenv --wkoshowref --refcolors --hidepadlock --genderlang --pastelcolors
+node ./tools/wollokdd2drawio/cli.mjs ./src/example --showenv --wkoshowref --refcolors --hidepadlock --esgenderlang --pastelcolors
 ```
 
 ![Dynamic Diagram](tools/docs/img/example_dd_2.png)
@@ -70,7 +70,7 @@ node ./tools/wollokdd2drawio/cli.mjs ./src/example --showenv --wkoshowref --refc
 ## Automatic generated Dynamic Diagrams (sequence):
 
 ```
-node ./tools/wollokdd2drawio/cli.mjs ./src/example --genseq --showenv --wkoshowref --refcolors --hidepadlock --genderlang --pastelcolors
+node ./tools/wollokdd2drawio/cli.mjs ./src/example --genseq --showenv --wkoshowref --refcolors --hidepadlock --esgenderlang --pastelcolors
 ```
 
 Draw.io format:

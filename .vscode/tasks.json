@@ -337,7 +337,7 @@
                 "--showenv",
                 "--wkoshowref",
                 "--refcolors",
-                "--genderlang",
+                "--esgenderlang",
                 "--pastelcolors"
             ],
             "options": {
