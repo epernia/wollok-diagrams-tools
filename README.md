@@ -56,10 +56,16 @@ myInstance.aSet().add(7)
 Draw.io format:
 
 ```
-node ./tools/wollokdd2drawio/cli.mjs ./src/example --showenv --wkoshowref --refcolors --hidepadlock --genderlang --pastelcolors
+node ./tools/wollokdd2drawio/cli.mjs ./src/example
 ```
 
 ![Dynamic Diagram](tools/docs/img/example_dd.png)
+
+```
+node ./tools/wollokdd2drawio/cli.mjs ./src/example --showenv --wkoshowref --refcolors --hidepadlock --genderlang --pastelcolors
+```
+
+![Dynamic Diagram](tools/docs/img/example_dd_2.png)
 
 ## Automatic generated Dynamic Diagrams (sequence):
 
