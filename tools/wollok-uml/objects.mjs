@@ -30,17 +30,30 @@ const LIST = 'wollok.lang.List'
 // ---------- el articulo que va adelante del nombre de la clase ----------
 
 /*
- * Que dice el ovalo de una instancia. Cuatro modos, y por defecto NINGUN articulo:
+ * Que dice el ovalo de una instancia. Cinco modos, uno por flag; el de por
+ * defecto es `en`:
  *
- *   (nada)            EmpresaConEmpleados      solo el nombre de la clase
- *   --englang         anEmpresaConEmpleados    articulo en ingles
- *   --inclusivelang   uneEmpresaConEmpleados   sin marcar genero
- *   --genderlang      unaEmpresaConEmpleados   con el genero inferido
+ *   modo          flag                ovalo                    textos
+ *   en            --enlang (defecto)  EmpresaConEmpleados      ingles
+ *   enArticle     --enarticlelang     anEmpresaConEmpleados    ingles
+ *   es            --eslang            EmpresaConEmpleados      castellano
+ *   esInclusive   --esinclusivelang   uneEmpresaConEmpleados   castellano
+ *   esGendered    --esgenderlang      unaEmpresaConEmpleados   castellano
+ *
+ * El modo decide DOS cosas: el articulo de las instancias y el idioma de los
+ * textos que pone la herramienta (Environment o Ambiente). El prefijo del flag
+ * dice el idioma, y lo que sigue, si hay articulo y de que tipo.
  *
  * El articulo va pegado al nombre, sin espacio, que es como se lee un objeto en
  * un diagrama hecho a mano.
  */
-export const LANGUAGES = ['none', 'english', 'inclusive', 'gendered']
+export const LANGUAGES = ['en', 'enArticle', 'es', 'esInclusive', 'esGendered']
+
+/** El modo cuando no se pasa ningun flag de idioma. */
+export const DEFAULT_LANGUAGE = 'en'
+
+/** Si los textos de la herramienta van en ingles. Sin modo, vale el de por defecto. */
+export const isEnglish = (language) => ['en', 'enArticle'].includes(language ?? DEFAULT_LANGUAGE)
 
 const FEMININE_ENDINGS = ['a', 'cion', 'sion', 'dad', 'tad', 'tud', 'umbre', 'ez', 'itis', 'esis']
 
@@ -90,18 +103,19 @@ const genderedArticleFor = (className, { feminine, masculine }) => {
 }
 
 /**
- * @param options.language   uno de LANGUAGES; por defecto 'none', o sea sin articulo
- * @param options.feminine   clases que llevan "una"; solo cuenta con 'gendered'
+ * @param options.language   uno de LANGUAGES; por defecto DEFAULT_LANGUAGE, sin articulo
+ * @param options.feminine   clases que llevan "una"; solo cuenta con 'esGendered'
  * @param options.masculine  idem al reves
  */
-export const articleFor = (className, { feminine = [], masculine = [], language = 'none' } = {}) => {
+export const articleFor = (className, { feminine = [], masculine = [], language = DEFAULT_LANGUAGE } = {}) => {
 	if (!className) return ''
 	switch (language) {
-		case 'english': return englishArticleFor(className)
+		case 'enArticle': return englishArticleFor(className)
 		// el inclusivo no es un tercer genero: es no marcarlo, asi que las listas de
 		// genero no tienen nada que decir aca
-		case 'inclusive': return 'une'
-		case 'gendered': return genderedArticleFor(className, { feminine, masculine })
+		case 'esInclusive': return 'une'
+		case 'esGendered': return genderedArticleFor(className, { feminine, masculine })
+		// 'en' y 'es' muestran solo el nombre de la clase
 		default: return ''
 	}
 }
@@ -110,10 +124,11 @@ export const articleFor = (className, { feminine = [], masculine = [], language 
  * EmpresaConEmpleados, y con articulo segun el modo:
  * anEmpresaConEmpleados | uneEmpresaConEmpleados | unaEmpresaConEmpleados
  *
- * Con 'gendered' el genero sale de la PRIMERA palabra: manda "Empresa".
+ * Con 'esGendered' el genero sale de la PRIMERA palabra: manda "Empresa".
  */
 export const instanceLabel = (className, genders) =>
-	`${articleFor(className, genders)}${className ?? 'Objeto'}`
+	// el nombre de respaldo, para una instancia sin clase, sigue al idioma
+	`${articleFor(className, genders)}${className ?? (isEnglish(genders?.language) ? 'Object' : 'Objeto')}`
 
 // ---------- lectura del .wrepl ----------
 
@@ -319,7 +334,7 @@ export const createIdentityRegistry = () => ({ byRuntime: new Map(), used: new S
  * @param options.language   uno de LANGUAGES: el articulo que lleva cada instancia
  * @param options.feminine   nombres de clase que llevan "una" aunque la heuristica diga otra cosa
  *                           (el nombre COMPLETO de la clase, no su primera palabra).
- *                           Solo cuenta con language 'gendered'.
+ *                           Solo cuenta con language 'esGendered'.
  * @param options.masculine  idem al reves
  * @param options.registry   createIdentityRegistry(), para una secuencia de fotos
  */
@@ -437,7 +452,7 @@ export const buildObjectModel = ({ interpreter, environment, replPackage }, opti
 	const genders = {
 		feminine: options.feminine ?? [],
 		masculine: options.masculine ?? [],
-		language: options.language ?? 'none',
+		language: options.language ?? DEFAULT_LANGUAGE,
 	}
 
 	const described = objects.map(({ id, object }) => {

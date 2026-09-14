@@ -21,7 +21,8 @@
  * vivo en el ambiente.
  *
  * Qué dibuja:
- *   - un rectángulo "Ambiente" con todos los objetos adentro, como elipses;
+ *   - un rectángulo "Environment" con todos los objetos adentro, como elipses
+ *     ("Ambiente" con los modos en castellano);
  *   - las var y const de cada objeto, como flechas salientes con su nombre, en
  *     negro, con un candado 🔒 pegado al nombre si son const;
  *   - las referencias globales del .wrepl, como texto fuera del ambiente con una
@@ -52,17 +53,23 @@
  *                            (sin ninguno de los dos: wollok light mode, verde lo
  *                            que trae Wollok y azul lo que escribiste vos)
  *   -t, --title <texto>      nombre de la pestaña del diagrama
- *       --englang            articulo en ingles delante del nombre de la clase:
- *                            anEmpresaConEmpleados, aPersona
- *       --inclusivelang      "une" sin marcar genero: uneEmpresaConEmpleados
- *       --genderlang         "un"/"una" con el genero inferido de la PRIMERA
- *                            palabra del nombre: unaEmpresaConEmpleados
- *                            (sin ninguno de los tres: solo el nombre de la
- *                            clase, EmpresaConEmpleados)
- *       --feminine <A,B>     clases que llevan "una"; solo cuenta con --genderlang
+ *   El idioma y el articulo de las instancias (si se pasan varios, vale el ultimo):
+ *       --enlang             POR DEFECTO. Textos en ingles (Environment,
+ *                            Construction, Object diagram) y en las instancias
+ *                            solo el nombre de la clase: Persona
+ *       --enarticlelang      idem, con "a"/"an" delante: aPersona,
+ *                            anEmpresaConEmpleados
+ *       --eslang             textos en castellano (Ambiente, Construccion) y
+ *                            solo el nombre de la clase: Persona
+ *       --esinclusivelang    idem, con "une" sin marcar genero: unePersona
+ *       --esgenderlang       idem, con "un"/"una" segun el genero inferido de la
+ *                            PRIMERA palabra del nombre: unaEmpresaConEmpleados
+ *       --feminine <A,B>     clases que llevan "una"; solo cuenta con --esgenderlang
  *       --masculine <A,B>    idem al reves
  *       --relayout           ignorar las posiciones del archivo anterior
  *       --keep-going         seguir aunque alguna línea del .wrepl falle
+ *                            (con --genseq no hace falta: siempre sigue, y la
+ *                            línea que falló se marca en rojo al pie)
  *   -q, --quiet              no mostrar advertencias
  */
 
@@ -71,19 +78,28 @@ import { existsSync } from 'node:fs'
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path'
 import { readSources } from '../wollok-uml/sources.mjs'
 import { readGeometry } from '../wollok-uml/drawio-merge.mjs'
-import { run, buildObjectModel, createIdentityRegistry } from '../wollok-uml/objects.mjs'
+import { run, buildObjectModel, createIdentityRegistry, DEFAULT_LANGUAGE } from '../wollok-uml/objects.mjs'
 import { loadConfig } from '../wollok-uml/config.mjs'
 import { extractModel } from '../wollok-uml/extract.mjs'
 import { colorIndexOf } from '../wollok-uml/families.mjs'
 import { renderObjectDiagram, renderSequence } from './render.mjs'
 import { groupSteps } from './sequence.mjs'
+import { textsFor } from './texts.mjs'
 import { familyCountOf } from './colors.mjs'
 
 const SUFFIX = '_dynamic'
 const SEQUENCE_SUFFIX = '_dynamic_seq'
 
+/** Los flags que cambiaron de nombre, para avisar cual es el nuevo. */
+const RENAMED_FLAGS = {
+	'--englang': '--enlang',
+	'--engarticlelang': '--enarticlelang',
+	'--inclusivelang': '--esinclusivelang',
+	'--genderlang': '--esgenderlang',
+}
+
 const parseArguments = (argv) => {
-	const options = { positional: [], feminine: [], masculine: [] }
+	const options = { positional: [], unknown: [], feminine: [], masculine: [], language: DEFAULT_LANGUAGE }
 	for (let i = 0; i < argv.length; i++) {
 		switch (argv[i]) {
 			case '-o': case '--output': options.output = argv[++i]; break
@@ -99,14 +115,19 @@ const parseArguments = (argv) => {
 			case '--pastelcolors': options.palette = 'pastel'; break
 			case '--colourblind': options.palette = 'colourblind'; break
 			// el ultimo que se pase es el que vale
-			case '--englang': options.language = 'english'; break
-			case '--inclusivelang': options.language = 'inclusive'; break
-			case '--genderlang': options.language = 'gendered'; break
+			case '--enlang': options.language = 'en'; break
+			case '--enarticlelang': options.language = 'enArticle'; break
+			case '--eslang': options.language = 'es'; break
+			case '--esinclusivelang': options.language = 'esInclusive'; break
+			case '--esgenderlang': options.language = 'esGendered'; break
 			case '--relayout': options.relayout = true; break
 			case '--keep-going': options.keepGoing = true; break
 			case '-q': case '--quiet': options.quiet = true; break
 			case '-h': case '--help': options.help = true; break
-			default: options.positional.push(argv[i])
+			default:
+				// un archivo nunca empieza con guion: si empieza, es un flag mal escrito
+				if (argv[i].startsWith('-')) options.unknown.push(argv[i])
+				else options.positional.push(argv[i])
 		}
 	}
 	return options
@@ -185,6 +206,19 @@ const withPackageNames = (files, modelPaths) => {
 const main = async () => {
 	const options = parseArguments(process.argv.slice(2))
 
+	// Antes un flag desconocido se tomaba por nombre de archivo, y el error que
+	// salia hablaba de un .wlk que no existe. Ahora se dice lo que es, y para los
+	// que cambiaron de nombre se sugiere el nuevo.
+	if (options.unknown.length) {
+		for (const flag of options.unknown) {
+			const renamed = RENAMED_FLAGS[flag]
+			console.error(renamed
+				? `La opción ${flag} ahora se llama ${renamed}`
+				: `No conozco la opción ${flag} (probá --help)`)
+		}
+		process.exit(1)
+	}
+
 	if (options.help || !options.positional.length) {
 		await printHelp()
 		process.exit(options.help ? 0 : 1)
@@ -208,7 +242,7 @@ const main = async () => {
 	const genders = {
 		feminine: options.feminine,
 		masculine: options.masculine,
-		language: options.language ?? 'none',
+		language: options.language,
 	}
 	const registry = createIdentityRegistry()
 	/*
@@ -236,7 +270,10 @@ const main = async () => {
 	if (session.errors.length) {
 		console.error(`\n${session.errors.length} línea(s) del .wrepl fallaron al ejecutarse:`)
 		for (const error of session.errors) console.error(`  ✗ ${error.text}\n      ${error.message}`)
-		if (!options.keepGoing) {
+		// La secuencia sigue siempre: una línea que falla es justo algo que conviene
+		// VER, y la secuencia la muestra al pie en rojo. El diagrama de un solo
+		// instante no tiene donde mostrarla, así que ahí se corta salvo --keep-going.
+		if (!options.keepGoing && !options.sequence) {
 			console.error('\nEl diagrama saldría incompleto. Corregí el ejemplo, o usá --keep-going para generarlo igual.')
 			process.exit(1)
 		}
@@ -244,7 +281,7 @@ const main = async () => {
 	}
 
 	const model = options.sequence ? steps[steps.length - 1]?.model ?? initialModel : snapshot(session)
-	const pages = options.sequence ? groupSteps(initialModel, steps) : undefined
+	const pages = options.sequence ? groupSteps(initialModel, steps, { language: options.language }) : undefined
 
 	const output = options.output ?? `${base}${options.sequence ? SEQUENCE_SUFFIX : SUFFIX}.drawio`
 	const previousGeometry = !options.relayout && existsSync(output)
@@ -258,13 +295,14 @@ const main = async () => {
 	const colorIndex = colorIndexOf(extractModel(session.environment, await loadConfig({ sources: modelPaths })))
 
 	const settings = {
-		name: options.title ?? `${basename(base)} — Diagrama de objetos`,
+		name: options.title ?? `${basename(base)} — ${textsFor(options.language).objectDiagram}`,
 		previousGeometry,
 		colorIndex,
 		showEnv: options.showEnv === true,
 		showPadlock: options.hidePadlock !== true,
 		refColors: options.refColors === true,
 		palette: options.palette,
+		language: options.language,
 		// El ruteo verifica lo que dibuja. Si alguna flecha no encontro por donde
 		// esquivar conviene enterarse: casi siempre quiere decir que el layout dejo
 		// un objeto en un lugar incomodo, y se arregla moviendolo a mano.
@@ -274,9 +312,9 @@ const main = async () => {
 			for (const warning of warnings) console.log(`     - ${warning}`)
 		},
 		header: [
-			`Generado por tools/wollokdd2drawio a partir de: ${files.map((f) => f.name).join(', ')}`
-				+ (replPath ? ` + ${basename(replPath)}` : ' (sin .wrepl: solo los WKO del modelo)'),
-			'No editar a mano: volver a generarlo.',
+			`${textsFor(options.language).generatedFrom} ${files.map((f) => f.name).join(', ')}`
+				+ (replPath ? ` + ${basename(replPath)}` : ` ${textsFor(options.language).withoutRepl}`),
+			textsFor(options.language).doNotEdit,
 		],
 	}
 	const diagram = pages ? renderSequence(pages, settings) : renderObjectDiagram(model, settings)

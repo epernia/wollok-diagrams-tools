@@ -26,6 +26,7 @@
 import { layout, isCircle } from './layout.mjs'
 import { routeReferences } from './routing.mjs'
 import { colorsFor } from './colors.mjs'
+import { textsFor } from './texts.mjs'
 
 const PADLOCK = '🔒'
 const REFERENCE_COLOR = '#000000'   // por defecto, toda referencia sale negra
@@ -53,6 +54,7 @@ const CAPTION_STYLE = `text;html=1;align=left;verticalAlign=top;fontFamily=Couri
 
 const CAPTION_GAP = 22
 const CAPTION_LINE_HEIGHT = 22
+const FAILURE_COLOR = '#FF0000'   // la ✗ y el mensaje de una línea del .wrepl que falló
 
 /**
  * El candado pegado al nombre marca que la referencia es `const`.
@@ -96,8 +98,32 @@ const escapeXml = (text) => String(text)
 	.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 	.replace(/"/g, '&quot;').replace(/'/g, '&apos;')
 
-/** Texto de varias líneas para una celda con html=1. */
-const multiline = (lines) => lines.map(escapeXml).join('&lt;br&gt;')
+/*
+ * El pie de la secuencia: las líneas del .wrepl que armaron la página.
+ *
+ * Una línea que falló se muestra igual, y DEBAJO, corrida hacia la derecha para
+ * que se lea como parte de ella, una ✗ con el mensaje del error en rojo:
+ *
+ *    2:  juliana.volar()
+ *        ✗ a Persona does not understand volar()        <- en rojo
+ *
+ * El mensaje va en su propio renglón porque los de Wollok suelen ser largos, y al
+ * lado de la línea dejaban el pie mucho más ancho que el dibujo.
+ *
+ * La celda es html=1, así que el texto se escapa DOS veces: primero como HTML
+ * (una línea con `a<b` se leería como una etiqueta <b>) y después todo junto
+ * como XML, para el atributo. Las comillas no hace falta escaparlas en HTML, y no
+ * se tocan: así una línea sin `& < >` queda exactamente como antes.
+ */
+const escapeHtml = (text) => String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+// lo que ocupa el "12:  " de adelante; en HTML los espacios seguidos se juntan
+const FAILURE_INDENT = '&nbsp;'.repeat(5)
+
+const captionRowsOf = (lines) => lines.flatMap((line) => [
+	escapeHtml(line.text),
+	...(line.error ? [`${FAILURE_INDENT}<font color="${FAILURE_COLOR}">✗ ${escapeHtml(line.error)}</font>`] : []),
+])
 
 const objectId = (id) => `obj::${id}`
 const GLOBAL_PREFIX = 'global::'
@@ -148,7 +174,7 @@ const unionOf = (models) => {
 
 // ---------- una página ----------
 
-const buildPage = ({ model, lines, name, index }, { ambiente, positions, globals, colors, showEnv, padlock, refColors, warnings }) => {
+const buildPage = ({ model, lines, name, index }, { ambiente, positions, globals, colors, showEnv, padlock, refColors, language, warnings }) => {
 	/*
 	 * El rectangulo del ambiente se dibuja solo con --showenv, pero la celda se
 	 * emite SIEMPRE, invisible cuando no se pide.
@@ -162,7 +188,10 @@ const buildPage = ({ model, lines, name, index }, { ambiente, positions, globals
 	 * Con visible="0" draw.io no lo dibuja ni lo deja seleccionar, y readGeometry
 	 * lo sigue leyendo.
 	 */
-	const cells = [...vertex('ambiente', escapeXml('Ambiente'), AMBIENTE_STYLE, ambiente, '1', showEnv === true)]
+	// el id sigue siendo 'ambiente' en cualquier idioma: es el ancla de las posiciones
+	// guardadas, y cambiarlo al cambiar de idioma perderia lo acomodado a mano
+	const ambienteLabel = textsFor(language).environment
+	const cells = [...vertex('ambiente', escapeXml(ambienteLabel), AMBIENTE_STYLE, ambiente, '1', showEnv === true)]
 
 	// --- los objetos, dibujados adentro del rectángulo ---
 	// El layout los ubica relativos al ambiente; acá se pasan a absolutos, porque
@@ -296,6 +325,7 @@ export const renderPages = (pages, options = {}) => {
 		showEnv: settings.showEnv === true,
 		padlock,
 		refColors: settings.refColors === true,
+		language: settings.language,
 		warnings: routingWarnings,
 	}
 
@@ -313,7 +343,7 @@ export const renderPages = (pages, options = {}) => {
 
 /** El diagrama de un solo estado: una página, sin pie. */
 export const renderObjectDiagram = (model, options = {}) =>
-	renderPages([{ model, lines: [], name: options.name ?? 'Diagrama de objetos' }], options)
+	renderPages([{ model, lines: [], name: options.name ?? textsFor(options.language).objectDiagram }], options)
 
 /** La secuencia completa: una página por paso, con las líneas al pie. */
 export const renderSequence = (pages, options = {}) => renderPages(pages, options)

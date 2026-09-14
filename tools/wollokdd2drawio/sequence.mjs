@@ -19,6 +19,8 @@
  *   const juan = new Persona()      ──► construye  ─┘ otra sola página
  */
 
+import { textsFor } from './texts.mjs'
+
 /**
  * Forma canónica de un modelo, para poder comparar dos fotos.
  *
@@ -76,11 +78,16 @@ export const isConstructionOnly = (before, after) => {
 	return before.globals.every((global) => globalsAfter.get(global.name)?.to === global.to)
 }
 
-/** Una línea tal como se muestra al pie del dibujo. */
-const captionLine = (step) => {
-	const numbered = `${String(step.sentence.line).padStart(2, ' ')}:  ${step.sentence.text}`
-	return step.error ? `${numbered}      ✗ ${step.error.message}` : numbered
-}
+/**
+ * Una línea del pie del dibujo: el texto numerado y, si falló, el error.
+ *
+ * Se devuelve como dato y no como texto ya armado porque el error se dibuja
+ * distinto —en rojo, con una ✗, en su propio renglón— y eso lo decide el render.
+ */
+const captionLine = (step) => ({
+	text: `${String(step.sentence.line).padStart(2, ' ')}:  ${step.sentence.text}`,
+	error: step.error?.message,
+})
 
 /** El nombre de la pestaña: entra poco, así que se recorta. */
 const TAB_LENGTH = 34
@@ -93,11 +100,13 @@ const tabName = (step) => {
 /**
  * Agrupa los pasos en páginas.
  *
- * @param initial  la foto de antes de ejecutar nada (el ambiente ya tiene los WKO)
- * @param steps    [{ sentence, model, error }] en orden de ejecución
+ * @param initial           la foto de antes de ejecutar nada (el ambiente ya tiene los WKO)
+ * @param steps             [{ sentence, model, error }] en orden de ejecución
+ * @param options.language  el idioma de los nombres de pestaña ("Construcción" o "Construction")
  * @returns [{ model, lines, name }] una entrada por página
  */
-export const groupSteps = (initial, steps) => {
+export const groupSteps = (initial, steps, { language } = {}) => {
+	const texts = textsFor(language)
 	const pages = []
 	const openPage = (model, name) => {
 		pages.push({ model, lines: [], name })
@@ -106,7 +115,7 @@ export const groupSteps = (initial, steps) => {
 
 	// La primera página de construcción arranca con el estado inicial, si es que
 	// hay algo que mostrar: los WKO del modelo existen antes de la primera línea.
-	let construction = initial.objects.length ? openPage(initial, 'Estado inicial') : undefined
+	let construction = initial.objects.length ? openPage(initial, texts.initialState) : undefined
 	let previous = initial
 	let previousSignature = signatureOf(initial)
 
@@ -115,15 +124,15 @@ export const groupSteps = (initial, steps) => {
 
 		if (signature === previousSignature) {
 			// no cambió nada: la línea se documenta al pie de la página actual
-			const current = pages[pages.length - 1] ?? (construction = openPage(step.model, 'Estado inicial'))
+			const current = pages[pages.length - 1] ?? (construction = openPage(step.model, texts.initialState))
 			current.lines.push(captionLine(step))
 		} else if (isConstructionOnly(previous, step.model)) {
 			// una tanda de creaciones entra toda en la misma página, esté al
 			// principio del ejemplo o en el medio
 			const first = !pages.length
-			construction ??= openPage(step.model, first ? 'Construcción' : tabName(step))
+			construction ??= openPage(step.model, first ? texts.construction : tabName(step))
 			construction.model = step.model
-			if (construction === pages[0]) construction.name = 'Construcción'
+			if (construction === pages[0]) construction.name = texts.construction
 			construction.lines.push(captionLine(step))
 		} else {
 			// una modificación corta la tanda y se lleva su propia página

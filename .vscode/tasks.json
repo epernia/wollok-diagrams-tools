@@ -238,14 +238,22 @@
                 "--refcolors",     // Coloreo de referencias. Pone las referencias
                                    // const en rojo y las var en verde.
                 "--hidepadlock",   // Oculta el candado de las referencias const.
-                "--genderlang",    // Parámetro que controla como se muestra nombre
+                "--esgenderlang",  // Parámetro para elegir el idioma de los
+                                   // textos y lo que se muestra como nombre
                                    // dentro de las instancias de las clases:
-                                   //   - Sin parámetro muestra por defecto
-                                   //     solo el nombre de la clase.
-                                   //   - "--englang" agrega "a" o "an" delante.
-                                   //   - "--genderlang" agrega "un" o "una"
-                                   //     delante, infiriendo el género.
-                                   //   - "--inclusivelang" agrega "une" delante.
+                                   //   - Sin parámetro, o "--enlang": textos en
+                                   //     inglés (Environment, Construction...)
+                                   //     y solo el nombre de la clase.
+                                   //   - "--enarticlelang": igual a enlang, y
+                                   //     agrega "a" o "an" delante.
+                                   //   - "--eslang": textos en castellano
+                                   //     (Ambiente, Construcción...) y solo el
+                                   //     nombre de la clase.
+                                   //   - "--esgenderlang": en castellano, y
+                                   //     agrega "un" o "una" delante,
+                                   //     infiriendo el género.
+                                   //   - "--esinclusivelang": en castellano, y
+                                   //     agrega "une" delante.
                 "--pastelcolors"   // Parámetro para elegir la paleta de colores:
                                    //   - Sin parámetro usa por defecto la paleta
                                    //     light mode de wollok de 2 colores apta
