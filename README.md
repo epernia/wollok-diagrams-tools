@@ -55,9 +55,17 @@ myInstance.aSet().add(7)
 
 Draw.io format:
 
+```
+node ./tools/wollokdd2drawio/cli.mjs ./src/example --showenv --wkoshowref --refcolors --hidepadlock --genderlang --pastelcolors
+```
+
 ![Dynamic Diagram](tools/docs/img/example_dd.png)
 
 ## Automatic generated Dynamic Diagrams (sequence):
+
+```
+node ./tools/wollokdd2drawio/cli.mjs ./src/example --genseq --showenv --wkoshowref --refcolors --hidepadlock --genderlang --pastelcolors
+```
 
 Draw.io format:
 
@@ -67,8 +75,16 @@ Draw.io format:
 
 Draw.io format:
 
+```
+node ./tools/wolloksd2drawio/cli.mjs ./src/example.wlk -o ./src/example_static.drawio --pastelcolors
+```
+
 ![Static Diagram (drawio)](tools/docs/img/example_sd_drawio.png)
 
 PlantUML format:
+
+```
+node ./tools/wolloksd2puml/cli.mjs ./src/example.wlk -o ./src/example_static.puml --pastelcolors
+```
 
 ![Static Diagram (puml)](tools/docs/img/example_sd_puml.png)
