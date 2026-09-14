@@ -266,11 +266,13 @@ const buildPage = ({ model, lines, name, index }, { ambiente, positions, globals
 
 	// --- el pie: las líneas que se ejecutaron ---
 	if (lines?.length) {
-		cells.push(...vertex('lineas', multiline(lines), CAPTION_STYLE, {
+		const rows = captionRowsOf(lines)
+		cells.push(...vertex('lineas', escapeXml(rows.join('<br>')), CAPTION_STYLE, {
 			x: ambiente.x,
 			y: ambiente.y + ambiente.height + CAPTION_GAP,
 			width: Math.max(ambiente.width, 420),
-			height: lines.length * CAPTION_LINE_HEIGHT,
+			// cada falla suma un renglón
+			height: rows.length * CAPTION_LINE_HEIGHT,
 		}))
 	}
 
