@@ -13,11 +13,14 @@
  *   2. entienden EXACTAMENTE el mismo conjunto de mensajes;
  *   3. ocupan el mismo lugar, o sea que hay un atributo con el mismo nombre
  *      (`celular` en juliana y en catalina) que en un caso es una y en otro es
- *      la otra — y ademas comparten al menos un mensaje.
+ *      la otra — y ademas comparten al menos un mensaje. El lugar se ve en el
+ *      valor inicial del atributo, y tambien en como se lo inicializa al crear
+ *      el objeto: `new Persona(empresa = personal)` y `new Persona(empresa =
+ *      movistar)` ponen a personal y a movistar en el mismo lugar.
  *
  * El criterio 3 es mas flojo que el del diagrama de objetos, que puede mirar que
- * paso de verdad en tiempo de ejecucion. Aca solo se ve el valor inicial de cada
- * atributo, asi que se compara por NOMBRE de atributo entre owners distintos.
+ * paso de verdad en tiempo de ejecucion. Aca solo se ve lo que dice el codigo,
+ * asi que se compara por NOMBRE de atributo entre owners distintos.
  * De ahi el resguardo de exigir un mensaje en comun: sin el, dos entidades que
  * casualmente tienen un atributo `nombre` quedarian emparentadas.
  *
@@ -126,8 +129,12 @@ const computeFamilies = (model) => {
 	const bySlot = new Map()
 	for (const entity of entities) {
 		for (const attribute of entity.attributes) {
-			if (attribute.inherited || !attribute.type || !byName.has(attribute.type)) continue
-			bySlot.set(attribute.name, [...(bySlot.get(attribute.name) ?? []), attribute.type])
+			if (attribute.inherited) continue
+			// su tipo, y todo lo que recibe al crear el objeto (ver slotTypes en extract.mjs)
+			for (const type of new Set([attribute.type, ...(attribute.slotTypes ?? [])])) {
+				if (!type || !byName.has(type)) continue
+				bySlot.set(attribute.name, [...(bySlot.get(attribute.name) ?? []), type])
+			}
 		}
 	}
 	/*
@@ -259,12 +266,49 @@ const roleNameOf = (members, entities) => {
 	for (const entity of entities) {
 		for (const attribute of entity.attributes) {
 			if (attribute.inherited) continue
-			if (!family.has(elementTypeOf(attribute.type))) continue
+			// cuenta por su tipo o por lo que recibe: `const empresa` no tiene tipo
+			// propio, pero recibe a personal y a movistar
+			const receives = [elementTypeOf(attribute.type), ...(attribute.slotTypes ?? [])]
+			if (!receives.some((type) => family.has(type))) continue
 			counts.set(attribute.name, (counts.get(attribute.name) ?? 0) + 1)
 		}
 	}
 	if (!counts.size) return undefined
 	return capitalize([...counts].sort((a, b) => b[1] - a[1])[0][0])
+}
+
+/*
+ * El nombre del rol cuando nadie guarda a la familia en un atributo: se busca en
+ * los PARAMETROS que la reciben.
+ *
+ *   paquete.podesSerEntregadoPor(unMensajero, unaUbicacion)
+ *       unaUbicacion.dejasPasarA(unMensajero)
+ *   brooklyn.dejasPasarA(unMensajero)    ->  unMensajero.peso()
+ *   matrix.dejasPasarA(unMensajero)      ->  unMensajero.podesLlamar()
+ *
+ * `unMensajero` es un rol, Mensajero, y todo lo que se le manda en cualquier metodo
+ * es lo que ese rol tiene que saber hacer: peso() y podesLlamar(). La familia
+ * {chuck, lincoln, neo} entiende las dos cosas, asi que es de ahi que sale su
+ * nombre. Igual que con un atributo, el nombre sale del codigo: no se inventa.
+ *
+ * Un rol que cumplen DOS familias no nombra a ninguna: elegir una seria tirar una
+ * moneda. Y si una familia cumple varios roles, gana el que mas le pide, y a
+ * igualdad el que mas se usa.
+ *
+ * @param parameterRoles  Map(nombre del rol -> { messages: Set(selector), sites })
+ */
+const parameterRoleNameOf = (group, eligible, parameterRoles, byName) => {
+	const understands = (candidate, role) => candidate.members.every((member) => {
+		const own = new Set(byName.get(member).messages
+			.map((message) => `${message.name}/${message.parameters.length}`))
+		return [...role.messages].every((selector) => own.has(selector))
+	})
+	const matches = [...parameterRoles]
+		.filter(([, role]) => understands(group, role))
+		.filter(([, role]) => eligible.filter((candidate) => understands(candidate, role)).length === 1)
+	if (!matches.length) return undefined
+	matches.sort((a, b) => b[1].messages.size - a[1].messages.size || b[1].sites - a[1].sites)
+	return matches[0][0]
 }
 
 /**
@@ -274,28 +318,37 @@ const roleNameOf = (members, entities) => {
  *   - todavia no cuelgue de ninguna abstraccion (si ya hay superclase o una
  *     interfaz declarada, esa ES la abstraccion: agregar otra seria ruido);
  *   - tenga al menos un mensaje en comun (una interfaz vacia no dice nada);
- *   - tenga de donde sacar un nombre honesto, o sea que alguien la referencie.
+ *   - tenga de donde sacar un nombre honesto: un atributo que la guarde, o si no
+ *     un parametro que la reciba y le mande mensajes (ver parameterRoleNameOf).
  *
- * Ese ultimo punto deja afuera a las familias que nadie referencia — en
- * celulares_b, {juliana, catalina}. Son polimorficas entre si, pero no cumplen
- * ningun rol en el modelo, asi que no hay nombre que ponerles. Quedan igual
- * pintadas del mismo color, que ya dice lo que hay que decir.
+ * La familia que no cumple ningun rol queda sin interfaz — en dual, {juliana,
+ * catalina} son polimorficas entre si pero nada las recibe. Quedan igual pintadas
+ * del mismo color, que ya dice lo que hay que decir.
  *
+ * @param options.parameterRoles  los roles de los parametros, de extract.mjs
  * @returns [{ name, members, operations }]
  */
-export const derivedInterfacesOf = (model) => {
+export const derivedInterfacesOf = (model, { parameterRoles = new Map() } = {}) => {
 	const byName = new Map(model.entities.map((entity) => [entity.name, entity]))
 	const taken = new Set([
 		...model.entities.map((entity) => entity.name),
 		...model.interfaces.map((entity) => entity.name),
 	])
 
-	const derived = []
-	for (const group of familyGroupsOf(model)) {
-		if (!group.messages.length) continue
-		if (group.members.some((name) => hasAbstraction(byName.get(name)))) continue
+	const eligible = familyGroupsOf(model).filter((group) =>
+		group.messages.length && !group.members.some((name) => hasAbstraction(byName.get(name))))
 
-		const name = roleNameOf(group.members, model.entities)
+	// Primero el nombre por atributo, que es el mas claro. Recien despues, entre las
+	// familias que quedaron SIN nombre, el que sale de un parametro: la ambiguedad
+	// solo se cuenta entre ellas. Una familia que ya se llama Celular por su
+	// atributo no compite por el rol de `unaPersona`, aunque tambien entienda llamar().
+	const byAttribute = new Map(eligible.map((group) => [group, roleNameOf(group.members, model.entities)]))
+	const unnamed = eligible.filter((group) => !byAttribute.get(group))
+
+	const derived = []
+	for (const group of eligible) {
+		const name = byAttribute.get(group)
+			?? parameterRoleNameOf(group, unnamed, parameterRoles, byName)
 		if (!name || taken.has(name)) continue
 		taken.add(name)
 

@@ -132,12 +132,19 @@ const occupied = (taken, x, y1, y2) => taken.some((leg) =>
 	Math.abs(leg.x - x) < LANE_STEP - 1
 	&& Math.min(y1, y2) < leg.bottom + EPSILON && Math.max(y1, y2) > leg.top - EPSILON)
 
+/** Lo mismo para un tramo HORIZONTAL: nadie mas corre a esa altura, en ese tramo. */
+const rowOccupied = (takenRows, y, x1, x2) => {
+	const [left, right] = [Math.min(x1, x2), Math.max(x1, x2)]
+	return takenRows.some((row) =>
+		Math.abs(row.y - y) < LANE_STEP - 1 && left < row.right - EPSILON && right > row.left + EPSILON)
+}
+
 /**
  * Arma la ruta de una asociacion probando formas en orden de preferencia:
  * recta, ele/zeta por un solo pasillo, y escalera por dos pasillos. Se queda
  * con la primera que no toca ninguna caja ajena.
  */
-const routeAssociation = (route, rects, taken) => {
+const routeAssociation = (route, rects, taken, takenRows) => {
 	const { exit, entry } = route
 	const others = rects.filter((rect) => rect.name !== route.relation.from && rect.name !== route.relation.to)
 	const clean = (points) => {
@@ -180,13 +187,29 @@ const routeAssociation = (route, rects, taken) => {
 			const x2 = (last[0] + last[1]) / 2
 			if (Math.abs(x1 - x2) < LANE_STEP) continue
 			const band = freeRows(others, x1, x2, Math.min(exit.y, entry.y) - 400, Math.max(exit.y, entry.y) + 400)
-			for (const gap of band) {
-				const y = (gap[0] + gap[1]) / 2
-				const points = [{ x: x1, y: exit.y }, { x: x1, y }, { x: x2, y }, { x: x2, y: entry.y }]
-				if (clean(points)) {
-					taken.push({ x: x1, top: Math.min(exit.y, y), bottom: Math.max(exit.y, y) })
-					taken.push({ x: x2, top: Math.min(y, entry.y), bottom: Math.max(y, entry.y) })
-					return points
+			// El centro de cada hueco primero, como siempre. Pero el centro del hueco
+			// entre dos filas de cajas es justo donde va el tronco de una herencia o
+			// una realizacion. Si ya hay algo corriendo a esa altura, se prueba el
+			// centro de OTRO hueco antes que el carril de al lado: dentro del mismo
+			// hueco no hay forma de pasar sin cruzar las patas del peine.
+			const heights = [
+				...band.map((gap) => (gap[0] + gap[1]) / 2),
+				...band.flatMap((gap) => lanesIn(gap).slice(1)),
+			]
+			// Esquivar un tronco es una PREFERENCIA, no una condicion: si ninguna altura
+			// libre sale limpia, se acepta pasar por una ocupada, que es lo que se hacia
+			// antes. Una flecha encimada con otra se ve peor que una que la cruza, pero
+			// mucho mejor que una sin camino, que atraviesa cajas.
+			for (const avoidTaken of [true, false]) {
+				for (const y of avoidTaken ? heights : band.map((gap) => (gap[0] + gap[1]) / 2)) {
+					if (avoidTaken && rowOccupied(takenRows, y, x1, x2)) continue
+					const points = [{ x: x1, y: exit.y }, { x: x1, y }, { x: x2, y }, { x: x2, y: entry.y }]
+					if (clean(points)) {
+						taken.push({ x: x1, top: Math.min(exit.y, y), bottom: Math.max(exit.y, y) })
+						taken.push({ x: x2, top: Math.min(y, entry.y), bottom: Math.max(y, entry.y) })
+						takenRows.push({ y, left: Math.min(x1, x2), right: Math.max(x1, x2) })
+						return points
+					}
 				}
 			}
 		}
@@ -260,6 +283,19 @@ export const routeAll = (boxes, relations, positions, obstacles = []) => {
 		routes.push(route)
 	})
 
+	// Los tramos de las flechas estructurales tambien ocupan lugar. El tronco del
+	// peine corre por el medio del hueco entre el padre y los hijos, que es
+	// exactamente la altura que una asociacion elegiria para cruzar ese hueco: sin
+	// registrarlo, la asociacion se dibujaba encima.
+	const takenRows = []
+	for (const route of routes) {
+		if (!route.points.length) continue          // recta vertical: no tiene tronco
+		const [first, last] = [route.points[0], route.points[route.points.length - 1]]
+		taken.push({ x: first.x, top: Math.min(first.y, route.exit.y), bottom: Math.max(first.y, route.exit.y) })
+		taken.push({ x: last.x, top: Math.min(last.y, route.entry.y), bottom: Math.max(last.y, route.entry.y) })
+		takenRows.push({ y: first.y, left: Math.min(first.x, last.x), right: Math.max(first.x, last.x) })
+	}
+
 	// --- asociaciones ---
 	// Las que entran por el mismo lado de la misma caja se reparten sobre la
 	// banda del titulo, para que no caigan todas en el mismo punto.
@@ -300,7 +336,14 @@ export const routeAll = (boxes, relations, positions, obstacles = []) => {
 	}
 	for (const [, list] of outgoing) {
 		const source = byName.get(list[0].relation.from)
-		list.sort((a, b) => a.index - b.index)
+		// De arriba a abajo segun donde esta el DESTINO: la flecha que va hacia algo
+		// que esta mas arriba sale por arriba. En el orden del codigo, dos flechas que
+		// salen del mismo costado hacia destinos a distinta altura se cruzaban al salir.
+		const targetMiddle = (item) => {
+			const target = rectOfName.get(item.relation.to)
+			return target.y + (target.bottom - target.y) / 2
+		}
+		list.sort((a, b) => targetMiddle(a) - targetMiddle(b) || a.index - b.index)
 		list.forEach((item, i) => fallbackExits.set(item.index,
 			Math.round((source.height * (i + 1)) / (list.length + 1))))
 	}
@@ -333,7 +376,7 @@ export const routeAll = (boxes, relations, positions, obstacles = []) => {
 			route.points = [{ x, y: route.exit.y }, { x, y: route.entry.y }]
 			taken.push({ x, top: Math.min(route.exit.y, route.entry.y), bottom: Math.max(route.exit.y, route.entry.y) })
 		} else {
-			const points = routeAssociation(route, rects, taken)
+			const points = routeAssociation(route, rects, taken, takenRows)
 			if (points === undefined) {
 				// No hay camino limpio (pasa cuando se movieron cajas a mano y una
 				// quedo tapando el paso). Igual se dibuja en angulo recto: dejarla sin

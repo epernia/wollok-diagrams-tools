@@ -39,7 +39,7 @@ const ARTICLES = ['un', 'una', 'unos', 'unas', 'el', 'la', 'los', 'las', 'mi', '
 const decapitalize = (s) => s.charAt(0).toLowerCase() + s.slice(1)
 
 /** unaMedida -> medida | elCelular -> celular | pertenencia -> pertenencia */
-const withoutArticle = (name) => {
+export const withoutArticle = (name) => {
 	for (const article of ARTICLES) {
 		if (name.startsWith(article) && name.length > article.length) {
 			const rest = name.slice(article.length)

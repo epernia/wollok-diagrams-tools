@@ -337,6 +337,7 @@
                 "--showenv",
                 "--wkoshowref",
                 "--refcolors",
+                "--hidepadlock",
                 "--esgenderlang",
                 "--pastelcolors"
             ],

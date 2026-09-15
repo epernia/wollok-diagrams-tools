@@ -15,8 +15,8 @@
  */
 
 import { annotation, arg, isHidden, unknownUmlAnnotations } from './annotations.mjs'
-import { createTypeResolver, isCollectionType, elementTypeOf } from './infer.mjs'
-import { entityNodesOf } from './entities.mjs'
+import { createTypeResolver, isCollectionType, elementTypeOf, withoutArticle } from './infer.mjs'
+import { entityNodesOf, instantiationsOf } from './entities.mjs'
 import { derivedInterfacesOf, familiesOf, wildcardsOf } from './families.mjs'
 
 const ENTITY_KINDS = { Class: 'class', Singleton: 'wko', Mixin: 'mixin' }
@@ -71,12 +71,16 @@ export const extractModel = (environment, config = {}, options = {}) => {
 	const implementorsOf = (interfaceName) =>
 		entityNodes.filter((node) => arg(node, 'UmlImplements', 'interface') === interfaceName)
 
+	/** Quienes cumplen cada interfaz deducida; se llena al deducirlas. */
+	const derivedMembers = new Map()
+
 	const methodReturnTypeOf = (entityName, methodName, seen) => {
 		const key = `${entityName}#${methodName}`
 		if (returnTypeCache.has(key)) return returnTypeCache.get(key)
 		// una interfaz no tiene codigo: lo que devuelve un mensaje suyo se
-		// averigua en cualquiera de sus implementadores
+		// averigua en cualquiera de sus implementadores, declarados o deducidos
 		const node = nodesByName.get(entityName) ?? implementorsOf(entityName)[0]
+			?? nodesByName.get(derivedMembers.get(entityName)?.[0])
 		if (!node) return undefined
 		const method = node.methods?.find((m) => m.name === methodName)
 			?? node.fields?.find((f) => f.name === methodName && f.isProperty)
@@ -88,7 +92,9 @@ export const extractModel = (environment, config = {}, options = {}) => {
 		return type
 	}
 
-	const resolver = createTypeResolver({ entityNames, entityAliases, dictionary, methodReturnTypeOf })
+	// `let`: despues de deducir interfaces se lo reemplaza por uno que tambien las
+	// conoce, para tipar lo que dependia de ellas (ver la segunda pasada, abajo)
+	let resolver = createTypeResolver({ entityNames, entityAliases, dictionary, methodReturnTypeOf })
 
 	// --- tipos de campos y de metodos ---
 
@@ -150,6 +156,66 @@ export const extractModel = (environment, config = {}, options = {}) => {
 		return field ? typeOfField(field, parent) : undefined
 	}
 
+	// Va DESPUES de definir el tipado de campos y metodos, no antes: el valor de un
+	// `new` puede ser un envio de mensaje (`empresa = fabrica.laEmpresa()`), y para
+	// tiparlo el resolvedor llama a returnTypeOf y typeOfField. Declaradas con
+	// `const` mas abajo, usarlas antes de su declaracion revienta.
+	/*
+	 * --- lo que dice el codigo de un atributo por COMO SE LO INICIALIZA ---
+	 *
+	 * Un atributo sin valor inicial (`const empresa`) no dice de que tipo es. Pero
+	 * el codigo si lo dice en otro lado: `new Persona(empresa = personal)` y
+	 * `new Persona(empresa = movistar)`. Eso es exactamente "ocupar el mismo
+	 * lugar", el criterio 3 de las familias, solo que antes solo se miraba el valor
+	 * inicial de cada atributo y este caso quedaba afuera.
+	 *
+	 * Se guarda lo que recibe cada atributo, sin repetir y en el orden del codigo.
+	 * Una referencia a un objeto se guarda con SU nombre, no con lo que implementa:
+	 * para saber quien comparte un lugar hacen falta los objetos concretos.
+	 *
+	 * @returns Map(clase -> Map(atributo -> [tipos]))
+	 */
+	const instantiatedValues = new Map()
+	const lastSegment = (name) => name?.split('.').pop()
+	for (const { node, owner } of instantiationsOf(environment)) {
+		const className = lastSegment(node.instantiated?.name)
+		if (!nodesByName.has(className)) continue
+		for (const namedArgument of node.args ?? []) {
+			const value = namedArgument.value
+			const referenced = value?.kind === 'Reference' ? lastSegment(value.name)
+				: value?.kind === 'New' ? lastSegment(value.instantiated?.name)
+					: undefined
+			const type = nodesByName.has(referenced)
+				? referenced
+				: resolver.typeOf(value, owner ? { entity: owner, localTypes: new Map() } : { localTypes: new Map() })
+			if (!type) continue
+			const byAttribute = instantiatedValues.get(className) ?? new Map()
+			const types = byAttribute.get(namedArgument.name) ?? []
+			if (!types.includes(type)) types.push(type)
+			byAttribute.set(namedArgument.name, types)
+			instantiatedValues.set(className, byAttribute)
+		}
+	}
+
+	/** Lo que recibe un atributo, contando lo que reciben las subclases. */
+	const superclassByName = new Map(entityNodes.map((entityNode) => [entityNode.name, superclassNameOf(entityNode)]))
+	const inheritsFrom = (name, ancestor) => {
+		for (let current = name; current; current = superclassByName.get(current)) {
+			if (current === ancestor) return true
+		}
+		return false
+	}
+	const slotTypesOf = (ownerName, fieldName) => {
+		const types = []
+		for (const [className, byAttribute] of instantiatedValues) {
+			if (!inheritsFrom(className, ownerName)) continue
+			for (const type of byAttribute.get(fieldName) ?? []) {
+				if (!types.includes(type)) types.push(type)
+			}
+		}
+		return types
+	}
+
 	// --- armado de las entidades ---
 
 	const relations = []
@@ -163,11 +229,22 @@ export const extractModel = (environment, config = {}, options = {}) => {
 		const attributes = (node.fields ?? [])
 			.filter((field) => !isHidden(field))
 			.map((field) => {
-				const type = typeOfField(field, node)
+				const declared = typeOfField(field, node)
+				const slotTypes = slotTypesOf(node.name, field.name)
+				// Si el codigo no dice el tipo, lo dice lo que el atributo recibe. Una
+				// sola cosa es el tipo, como en una referencia (un WKO vale por lo que
+				// implementa). Varias son CANDIDATAS: se usa la primera para poder armar
+				// la relacion, y mas abajo, con las familias ya calculadas, se reemplaza
+				// por la abstraccion que las une, o se descarta si no hay ninguna.
+				const fromSlots = !declared && slotTypes.length > 0
+				const type = declared
+					?? (slotTypes.length === 1 ? entityAliases.get(slotTypes[0]) ?? slotTypes[0] : slotTypes[0])
 				if (!type) warnings.push(`${node.name}.${field.name}: no pude inferir el tipo (usa @UmlType o el diccionario "types")`)
 				return {
 					name: field.name,
 					type,
+					...(slotTypes.length ? { slotTypes } : {}),
+					...(fromSlots && slotTypes.length > 1 ? { typeFromCandidates: true } : {}),
 					// una property genera accesores publicos; el resto es privado
 					visibility: field.isProperty ? '+' : '-',
 					mutability: field.isConstant ? 'const' : 'var',
@@ -302,6 +379,41 @@ export const extractModel = (environment, config = {}, options = {}) => {
 	for (const extra of config.relations ?? []) relations.push({ kind: 'association', ...extra })
 	for (const note of config.notes ?? []) notes.push({ position: 'right', ...note })
 
+	/*
+	 * --- los roles de los parametros ---
+	 *
+	 * Lo que se le manda a un parametro dice que rol cumple lo que llega ahi:
+	 * `unMensajero.peso()` pide un Mensajero que sepa peso(). Se juntan todos los
+	 * parametros con el mismo nombre de rol, en cualquier metodo, porque es el
+	 * mismo concepto usado en distintos lugares. De aca sale el nombre de las
+	 * familias que nadie guarda en un atributo (ver derivedInterfacesOf).
+	 *
+	 * Los mensajes que entiende CUALQUIER objeto no cuentan: comparar
+	 * `unMensajero == otro` no dice nada de que clase de cosa es.
+	 */
+	const EVERY_OBJECT_UNDERSTANDS = new Set(['==', '!=', '===', '!==', 'equals', 'toString', 'printString', 'identity', 'className', 'kindName'])
+	const parameterRoles = new Map()
+	for (const node of entityNodes) {
+		for (const method of node.methods ?? []) {
+			if (!method.sourceMap) continue
+			for (const parameter of method.parameters ?? []) {
+				const sent = new Set()
+				for (const send of method.descendants ?? []) {
+					if (send.kind !== 'Send' || EVERY_OBJECT_UNDERSTANDS.has(send.message)) continue
+					if (send.receiver?.kind !== 'Reference' || send.receiver.name !== parameter.name) continue
+					sent.add(`${send.message}/${(send.args ?? []).length}`)
+				}
+				if (!sent.size) continue
+				const bare = withoutArticle(parameter.name)
+				const roleName = bare.charAt(0).toUpperCase() + bare.slice(1)
+				const role = parameterRoles.get(roleName) ?? { messages: new Set(), sites: 0 }
+				for (const selector of sent) role.messages.add(selector)
+				role.sites += 1
+				parameterRoles.set(roleName, role)
+			}
+		}
+	}
+
 	const model = { entities, interfaces, relations, notes, warnings }
 
 	// Las familias se calculan ACA, sobre el modelo todavia sin tocar, y quedan
@@ -324,7 +436,7 @@ export const extractModel = (environment, config = {}, options = {}) => {
 	// mas, con sus realizaciones. De ahi en adelante el resto del pipeline no
 	// distingue si la escribiste vos o la dedujo la herramienta.
 	if (options.deriveInterfaces !== false) {
-		for (const derived of derivedInterfacesOf(model)) {
+		for (const derived of derivedInterfacesOf(model, { parameterRoles })) {
 			interfaces.push({
 				kind: 'interface',
 				name: derived.name,
@@ -340,6 +452,43 @@ export const extractModel = (environment, config = {}, options = {}) => {
 			for (const member of derived.members) {
 				entities.find((entity) => entity.name === member).interfaces.push(derived.name)
 				relations.push({ kind: 'realization', from: derived.name, to: member })
+			}
+			derivedMembers.set(derived.name, derived.members)
+		}
+	}
+
+	/*
+	 * --- segunda pasada: los tipos que dependian de una interfaz deducida ---
+	 *
+	 * Los parametros se tiparon ANTES de que existieran las interfaces deducidas,
+	 * asi que `unMensajero` quedo sin tipo. Ahora que Mensajero existe se vuelve a
+	 * mirar cada parametro que quedo sin tipo, y cada retorno que quedo sin tipo:
+	 * `matrix.dejasPasarA(unMensajero)` devuelve `unMensajero.podesLlamar()`, que
+	 * recien ahora se sabe que es Boolean.
+	 *
+	 * Solo se completa lo que falta: lo que ya tenia tipo no se toca.
+	 */
+	if (derivedMembers.size) {
+		resolver = createTypeResolver({
+			entityNames: [...entityNames, ...derivedMembers.keys()],
+			entityAliases,
+			dictionary,
+			methodReturnTypeOf,
+		})
+		// lo que se calculo sin conocer las interfaces puede haber quedado en undefined
+		returnTypeCache.clear()
+		const entitiesByNodeName = new Map(entities.map((entity) => [entity.name, entity]))
+		for (const node of entityNodes) {
+			const entity = entitiesByNodeName.get(node.name)
+			for (const method of node.methods ?? []) {
+				const arity = (method.parameters ?? []).length
+				const operation = entity?.operations.find((candidate) =>
+					candidate.name === method.name && candidate.parameters.length === arity)
+				if (!operation) continue
+				operation.parameters.forEach((parameter, index) => {
+					if (!parameter.type) parameter.type = typeOfParameter(method.parameters[index])
+				})
+				if (!operation.returns) operation.returns = returnTypeOf(method, node)
 			}
 		}
 	}
@@ -377,7 +526,101 @@ export const extractModel = (environment, config = {}, options = {}) => {
 		}
 	}
 
+	/*
+	 * --- un atributo que recibe cosas distintas ---
+	 *
+	 * Si recibio varias candidatas, su tipo provisorio es la primera. Eso no puede
+	 * quedar asi: `empresa : personal` diria que la empresa es siempre personal,
+	 * cuando tambien puede ser movistar. Tres salidas, de mejor a peor:
+	 *
+	 *   - el retargeteo ya lo llevo a una abstraccion (la interfaz deducida de la
+	 *     familia, o una clase abstracta): ese es el tipo, y no hay nada que hacer;
+	 *   - las candidatas heredan de una misma clase: el tipo es esa clase;
+	 *   - no tienen nada en comun: el atributo queda SIN tipo y se avisa por que.
+	 *     Es menos de lo que se quisiera, pero no es mentira.
+	 */
+	const entitiesByName = new Map(entities.map((entity) => [entity.name, entity]))
+	for (const entity of entities) {
+		for (const attribute of entity.attributes) {
+			if (!attribute.typeFromCandidates) continue
+			if (!attribute.slotTypes.includes(attribute.type)) continue
+			const relation = relations.find((candidate) =>
+				candidate.from === entity.name && candidate.fromAttribute === attribute.name)
+			const common = commonSuperclassOf(attribute.slotTypes, entitiesByName)
+			if (common) {
+				attribute.type = common
+				if (relation) relation.to = common
+				continue
+			}
+			attribute.type = undefined
+			attribute.isRelation = false
+			if (relation) relations.splice(relations.indexOf(relation), 1)
+			// El aviso tiene que decir el motivo verdadero. Que no haya abstraccion no
+			// quiere decir que no se parezcan: pueden ser de la misma familia y no tener
+			// interfaz (con --without-inference, o si uno ya hereda de una clase
+			// concreta). En ese caso lo util es decir como declararla.
+			const family = familiesOf(model)
+			const together = new Set(attribute.slotTypes.map((type) => family.get(type))).size === 1
+				&& attribute.slotTypes.every((type) => family.has(type))
+			warnings.push(together
+				? `${entity.name}.${attribute.name}: recibe ${attribute.slotTypes.join(', ')}, que son polimorficos entre si pero no tienen una interfaz ni una superclase que los una, asi que no pude inferir el tipo (declara la interfaz con @UmlImplements, o usa @UmlType)`
+				: `${entity.name}.${attribute.name}: recibe ${attribute.slotTypes.join(', ')}, que no son polimorficos entre si, asi que no pude inferir el tipo (usa @UmlType o el diccionario "types")`)
+		}
+	}
+
+	/*
+	 * --- dependencias hacia una interfaz ---
+	 *
+	 * `paquete.podesSerEntregadoPor(unMensajero : Mensajero, unaUbicacion :
+	 * Ubicacion)` usa un Mensajero y una Ubicacion sin guardarlos: eso es una
+	 * dependencia, la flecha punteada `paquete ..> Mensajero`.
+	 *
+	 * Pero NO se dibuja desde un metodo que es parte del protocolo de una interfaz
+	 * que la entidad cumple. `brooklyn.dejasPasarA(unMensajero : Mensajero)` es el
+	 * mensaje de Ubicacion: el tipo Mensajero ya se lee en la firma, y repetir una
+	 * flecha por cada implementador solo llenaria el dibujo con lo mismo dicho tres
+	 * veces.
+	 *
+	 * Tampoco se dibuja si esas dos cajas ya estan unidas por otra relacion: una
+	 * asociacion o una realizacion ya dicen mas que una dependencia.
+	 */
+	const interfacesByName = new Map(interfaces.map((entity) => [entity.name, entity]))
+	for (const entity of entities) {
+		const protocol = new Set(entity.interfaces.flatMap((name) =>
+			(interfacesByName.get(name)?.operations ?? []).map((operation) => `${operation.name}/${operation.parameters.length}`)))
+		const targets = []
+		for (const operation of entity.operations) {
+			if (protocol.has(`${operation.name}/${operation.parameters.length}`)) continue
+			for (const parameter of operation.parameters) {
+				const target = parameter.type
+				if (!interfacesByName.has(target) || target === entity.name || targets.includes(target)) continue
+				targets.push(target)
+			}
+		}
+		for (const target of targets) {
+			const linked = relations.some((relation) =>
+				(relation.from === entity.name && relation.to === target) || (relation.from === target && relation.to === entity.name))
+			if (!linked) relations.push({ kind: 'dependency', from: entity.name, to: target })
+		}
+	}
+
 	return model
+}
+
+/**
+ * La clase mas cercana de la que heredan todas, o undefined. Una entidad cuenta
+ * como su propia ancestro: [Celular, samsung] tienen en comun a Celular.
+ */
+const commonSuperclassOf = (names, entitiesByName) => {
+	const lineageOf = (name) => {
+		const lineage = []
+		for (let current = name; entitiesByName.has(current); current = entitiesByName.get(current).superclass) {
+			lineage.push(current)
+		}
+		return lineage
+	}
+	const [first, ...rest] = names.map(lineageOf)
+	return first?.find((ancestor) => rest.every((lineage) => lineage.includes(ancestor)))
 }
 
 const STRUCTURAL_KINDS = ['inheritance', 'realization', 'mixin']

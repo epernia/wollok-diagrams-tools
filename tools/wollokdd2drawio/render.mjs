@@ -343,9 +343,19 @@ export const renderPages = (pages, options = {}) => {
 	].join('\n') + '\n'
 }
 
-/** El diagrama de un solo estado: una página, sin pie. */
+/**
+ * El diagrama de un solo estado: una página. Lleva pie sólo si alguna línea del
+ * .wrepl falló, y en ese caso lista esas líneas, con su error en rojo, igual que
+ * la secuencia. Si no falló nada no hay pie, y el archivo sale como siempre.
+ *
+ * @param options.failures  [{ text, error }] de captionLineOf, una por línea que falló
+ */
 export const renderObjectDiagram = (model, options = {}) =>
-	renderPages([{ model, lines: [], name: options.name ?? textsFor(options.language).objectDiagram }], options)
+	renderPages([{
+		model,
+		lines: options.failures ?? [],
+		name: options.name ?? textsFor(options.language).objectDiagram,
+	}], options)
 
 /** La secuencia completa: una página por paso, con las líneas al pie. */
 export const renderSequence = (pages, options = {}) => renderPages(pages, options)

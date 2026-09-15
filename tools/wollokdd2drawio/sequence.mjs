@@ -83,11 +83,19 @@ export const isConstructionOnly = (before, after) => {
  *
  * Se devuelve como dato y no como texto ya armado porque el error se dibuja
  * distinto —en rojo, con una ✗, en su propio renglón— y eso lo decide el render.
+ *
+ * La usan la secuencia (todas las líneas) y el diagrama de un solo instante (sólo
+ * las que fallaron): así las dos anotan una falla exactamente igual.
+ *
+ * @param sentence  { line, text } de la línea del .wrepl
+ * @param message   el mensaje del error, si falló
  */
-const captionLine = (step) => ({
-	text: `${String(step.sentence.line).padStart(2, ' ')}:  ${step.sentence.text}`,
-	error: step.error?.message,
+export const captionLineOf = ({ line, text }, message) => ({
+	text: `${String(line).padStart(2, ' ')}:  ${text}`,
+	error: message,
 })
+
+const captionLine = (step) => captionLineOf(step.sentence, step.error?.message)
 
 /** El nombre de la pestaña: entra poco, así que se recorta. */
 const TAB_LENGTH = 34

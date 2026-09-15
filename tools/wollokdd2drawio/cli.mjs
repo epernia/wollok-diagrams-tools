@@ -67,9 +67,6 @@
  *       --feminine <A,B>     clases que llevan "una"; solo cuenta con --esgenderlang
  *       --masculine <A,B>    idem al reves
  *       --relayout           ignorar las posiciones del archivo anterior
- *       --keep-going         seguir aunque alguna línea del .wrepl falle
- *                            (con --genseq no hace falta: siempre sigue, y la
- *                            línea que falló se marca en rojo al pie)
  *   -q, --quiet              no mostrar advertencias
  */
 
@@ -83,7 +80,7 @@ import { loadConfig } from '../wollok-uml/config.mjs'
 import { extractModel } from '../wollok-uml/extract.mjs'
 import { colorIndexOf } from '../wollok-uml/families.mjs'
 import { renderObjectDiagram, renderSequence } from './render.mjs'
-import { groupSteps } from './sequence.mjs'
+import { groupSteps, captionLineOf } from './sequence.mjs'
 import { textsFor } from './texts.mjs'
 import { familyCountOf } from './colors.mjs'
 
@@ -267,16 +264,14 @@ const main = async () => {
 		} : {}),
 	})
 
+	// Una línea que falla no corta nada. El .wrepl se ejecuta completo —el REPL de
+	// Wollok hace lo mismo: sigue con la línea siguiente— y el diagrama se genera
+	// con lo que haya quedado. Las líneas que fallaron se anotan en el dibujo, al
+	// pie, con su error en rojo: ver dónde falló el ejemplo es justamente algo que
+	// conviene tener a la vista, no un motivo para no tener diagrama.
 	if (session.errors.length) {
-		console.error(`\n${session.errors.length} línea(s) del .wrepl fallaron al ejecutarse:`)
+		console.error(`\n${session.errors.length} línea(s) del .wrepl fallaron al ejecutarse (quedan marcadas en rojo al pie del diagrama):`)
 		for (const error of session.errors) console.error(`  ✗ ${error.text}\n      ${error.message}`)
-		// La secuencia sigue siempre: una línea que falla es justo algo que conviene
-		// VER, y la secuencia la muestra al pie en rojo. El diagrama de un solo
-		// instante no tiene donde mostrarla, así que ahí se corta salvo --keep-going.
-		if (!options.keepGoing && !options.sequence) {
-			console.error('\nEl diagrama saldría incompleto. Corregí el ejemplo, o usá --keep-going para generarlo igual.')
-			process.exit(1)
-		}
 		console.error('')
 	}
 
@@ -317,7 +312,8 @@ const main = async () => {
 			textsFor(options.language).doNotEdit,
 		],
 	}
-	const diagram = pages ? renderSequence(pages, settings) : renderObjectDiagram(model, settings)
+	const failures = session.errors.map((error) => captionLineOf(error, error.message))
+	const diagram = pages ? renderSequence(pages, settings) : renderObjectDiagram(model, { ...settings, failures })
 
 	await writeFile(output, diagram, 'utf8')
 	const resumen = `${model.objects.length} objetos, ${model.references.length} referencias, ${model.globals.length} globales, ${familyCountOf(model)} familias polimórficas`
