@@ -1,73 +1,13 @@
 #!/usr/bin/env node
 /*
  * wollokdd2drawio — genera un DIAGRAMA DE OBJETOS en formato draw.io a partir de un
- * modelo Wollok (.wlk) y un ejemplo ejecutable (.wrepl).
+ * modelo Wollok (.wlk) y un ejemplo ejecutable (.wrepl), ejecutandolo.
  *
  *   node tools/wollokdd2drawio/cli.mjs ejercicio1
- *   node tools/wollokdd2drawio/cli.mjs modelo.wlk ejemplo.wrepl -o diagrama.drawio
+ *   node tools/wollokdd2drawio/cli.mjs modelo.wlk ejemplo.wrepl -o diagrama.drawio --genseq
  *
- * Con UN solo parámetro se lo toma como nombre base: busca <base>.wlk y
- * <base>.wrepl y escribe <base>_dynamic.drawio. Si el parámetro es una carpeta,
- * busca adentro el .wlk y el .wrepl.
- *
- * Con dos o más, el .wrepl se reconoce por su extensión y el orden no importa.
- *
- * El .wrepl es OPCIONAL: sin ejemplo que ejecutar, el diagrama muestra el ambiente
- * tal como queda al cargar el modelo, o sea solamente sus WKO.
- *
- * A diferencia del diagrama de clases, este no se puede sacar leyendo el código:
- * hay que EJECUTARLO. El .wrepl se corre línea por línea con el mismo intérprete
- * que usa el REPL de Wollok, y después se camina el grafo de objetos que quedó
- * vivo en el ambiente.
- *
- * Qué dibuja:
- *   - un rectángulo "Environment" con todos los objetos adentro, como elipses
- *     ("Ambiente" con los modos en castellano);
- *   - las var y const de cada objeto, como flechas salientes con su nombre, en
- *     negro, con un candado 🔒 pegado al nombre si son const;
- *   - las referencias globales del .wrepl, como texto fuera del ambiente con una
- *     flecha que entra y pincha al objeto;
- *   - los WKO como un círculo que dice "WKO", con su nombre como referencia
- *     global constante;
- *   - los elementos de una List numerados 0, 1, 2...;
- *   - un color por familia polimórfica.
- *
- * Con --genseq no genera una sola foto sino la SECUENCIA: un archivo con una
- * página por cada línea del .wrepl, y al pie del ambiente la línea que se
- * ejecutó. Las líneas que no cambian el diagrama no abren página nueva: se
- * suman al pie del dibujo que no modificaron.
- *
- * Opciones:
- *   -o, --output <archivo>   .drawio de salida (por defecto: <base>_dynamic.drawio,
- *                            o <base>_dynamic_seq.drawio con --genseq)
- *       --genseq             generar la secuencia paso a paso
- *       --wkoshowref         dibujar tambien la referencia global de cada WKO,
- *                            aunque su nombre ya este adentro del ovalo
- *       --showenv            dibujar el rectangulo del Ambiente
- *       --hidepadlock        no poner el candado 🔒 en las referencias const
- *       --refcolors          pintar las referencias: const y nombres de object en
- *                            rojo, var en verde (por defecto todas en negro)
- *       --colourblind        colorear por familia polimorfica, con tonos aptos
- *                            para daltonicos
- *       --pastelcolors       idem, con la paleta pastel de draw.io
- *                            (sin ninguno de los dos: wollok light mode, verde lo
- *                            que trae Wollok y azul lo que escribiste vos)
- *   -t, --title <texto>      nombre de la pestaña del diagrama
- *   El idioma y el articulo de las instancias (si se pasan varios, vale el ultimo):
- *       --enlang             POR DEFECTO. Textos en ingles (Environment,
- *                            Construction, Object diagram) y en las instancias
- *                            solo el nombre de la clase: Persona
- *       --enarticlelang      idem, con "a"/"an" delante: aPersona,
- *                            anEmpresaConEmpleados
- *       --eslang             textos en castellano (Ambiente, Construccion) y
- *                            solo el nombre de la clase: Persona
- *       --esinclusivelang    idem, con "une" sin marcar genero: unePersona
- *       --esgenderlang       idem, con "un"/"una" segun el genero inferido de la
- *                            PRIMERA palabra del nombre: unaEmpresaConEmpleados
- *       --feminine <A,B>     clases que llevan "una"; solo cuenta con --esgenderlang
- *       --masculine <A,B>    idem al reves
- *       --relayout           ignorar las posiciones del archivo anterior
- *   -q, --quiet              no mostrar advertencias
+ * Las opciones y lo que dibuja estan en help.mjs (o con --help). Los mensajes
+ * salen en ingles por defecto y en castellano con cualquiera de los --es...
  */
 
 import { readFile, writeFile, readdir, stat } from 'node:fs/promises'
@@ -75,14 +15,54 @@ import { existsSync } from 'node:fs'
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path'
 import { readSources } from '../wollok-uml/sources.mjs'
 import { readGeometry } from '../wollok-uml/drawio-merge.mjs'
-import { run, buildObjectModel, createIdentityRegistry, DEFAULT_LANGUAGE } from '../wollok-uml/objects.mjs'
+import { run, buildObjectModel, createIdentityRegistry } from '../wollok-uml/objects.mjs'
 import { loadConfig } from '../wollok-uml/config.mjs'
 import { extractModel } from '../wollok-uml/extract.mjs'
 import { colorIndexOf } from '../wollok-uml/families.mjs'
+import { DEFAULT_LANGUAGE, LANGUAGE_FLAGS, isLanguageFlag, messagesFor } from '../wollok-uml/i18n.mjs'
 import { renderObjectDiagram, renderSequence } from './render.mjs'
 import { groupSteps, captionLineOf } from './sequence.mjs'
 import { textsFor } from './texts.mjs'
 import { familyCountOf } from './colors.mjs'
+import { HELP } from './help.mjs'
+
+/** Lo que este modulo le dice al usuario. Mismas claves en los dos idiomas. */
+const MESSAGES = {
+	en: {
+		renamedFlag: (flag, renamed) => `The option ${flag} is now called ${renamed}`,
+		unknownFlag: (flag) => `I don't know the option ${flag} (try --help)`,
+		noModelInFolder: (folder) => `There is no .wlk in the folder ${folder}`,
+		severalRepls: (folder, repls) => `There are ${repls.length} .wrepl files in ${folder}: tell me which one you want (${repls.join(', ')})`,
+		modelNotFound: (model) =>
+			`With a single argument I look for <name>.wlk, and I couldn't find ${model}\n` +
+			'If the files have different names, pass them to me: cli.mjs model.wlk [example.wrepl]',
+		missingModel: 'The .wlk file with the model is missing',
+		failedLines: (count) => `${count} .wrepl line(s) failed to run (they are marked in red at the bottom of the diagram):`,
+		summary: (objects, references, globals, families) => `${objects} objects, ${references} references, ${globals} globals, ${families} polymorphic families`,
+		sequenceSummary: (pages, lines, summary) => `${pages} pages for ${lines} lines · at the end: ${summary}`,
+		keptPositions: (count) => `(I kept the position of ${count} element(s) from the previous file)`,
+		withoutRepl: "(there is no .wrepl: the diagram only shows the model's WKOs)",
+		unroutedArrows: (count) => `${count} arrow(s) I couldn't reroute:`,
+		warnings: (count) => `${count} warning(s):`,
+	},
+	es: {
+		renamedFlag: (flag, renamed) => `La opción ${flag} ahora se llama ${renamed}`,
+		unknownFlag: (flag) => `No conozco la opción ${flag} (probá --help)`,
+		noModelInFolder: (folder) => `No hay ningún .wlk en la carpeta ${folder}`,
+		severalRepls: (folder, repls) => `Hay ${repls.length} archivos .wrepl en ${folder}: pasame cuál querés (${repls.join(', ')})`,
+		modelNotFound: (model) =>
+			`Con un solo parámetro busco <nombre>.wlk, y no encontré ${model}\n` +
+			'Si los archivos se llaman distinto, pasamelos: cli.mjs modelo.wlk [ejemplo.wrepl]',
+		missingModel: 'Falta el archivo .wlk con el modelo',
+		failedLines: (count) => `${count} línea(s) del .wrepl fallaron al ejecutarse (quedan marcadas en rojo al pie del diagrama):`,
+		summary: (objects, references, globals, families) => `${objects} objetos, ${references} referencias, ${globals} globales, ${families} familias polimórficas`,
+		sequenceSummary: (pages, lines, summary) => `${pages} páginas para ${lines} líneas · al final: ${summary}`,
+		keptPositions: (count) => `(conservé la posición de ${count} elemento(s) del archivo anterior)`,
+		withoutRepl: '(no hay .wrepl: el diagrama muestra solo los WKO del modelo)',
+		unroutedArrows: (count) => `${count} flecha(s) que no pude desviar:`,
+		warnings: (count) => `${count} advertencia(s):`,
+	},
+}
 
 const SUFFIX = '_dynamic'
 const SEQUENCE_SUFFIX = '_dynamic_seq'
@@ -111,28 +91,19 @@ const parseArguments = (argv) => {
 			// el ultimo que se pase es el que vale
 			case '--pastelcolors': options.palette = 'pastel'; break
 			case '--colourblind': options.palette = 'colourblind'; break
-			// el ultimo que se pase es el que vale
-			case '--enlang': options.language = 'en'; break
-			case '--enarticlelang': options.language = 'enArticle'; break
-			case '--eslang': options.language = 'es'; break
-			case '--esinclusivelang': options.language = 'esInclusive'; break
-			case '--esgenderlang': options.language = 'esGendered'; break
 			case '--relayout': options.relayout = true; break
 			case '--keep-going': options.keepGoing = true; break
 			case '-q': case '--quiet': options.quiet = true; break
 			case '-h': case '--help': options.help = true; break
 			default:
+				// los flags de idioma (--enlang, --eslang...): el ultimo que se pase es el que vale
+				if (isLanguageFlag(argv[i])) options.language = LANGUAGE_FLAGS[argv[i]]
 				// un archivo nunca empieza con guion: si empieza, es un flag mal escrito
-				if (argv[i].startsWith('-')) options.unknown.push(argv[i])
+				else if (argv[i].startsWith('-')) options.unknown.push(argv[i])
 				else options.positional.push(argv[i])
 		}
 	}
 	return options
-}
-
-const printHelp = async () => {
-	const text = await readFile(new URL(import.meta.url), 'utf8')
-	console.log(text.split('*/')[0].replace(/^#!.*\n/, '').replace(/^\/\*\n?/, '').replace(/^ \* ?/gm, ''))
 }
 
 const isDirectory = async (path) => {
@@ -142,13 +113,13 @@ const isDirectory = async (path) => {
 /**
  * Una carpeta: adentro tiene que haber al menos un .wlk. El .wrepl es opcional.
  */
-const fromFolder = async (folder) => {
+const fromFolder = async (folder, say) => {
 	const entries = await readdir(folder)
 	const repls = entries.filter((entry) => extname(entry) === '.wrepl')
 	const models = entries.filter((entry) => extname(entry) === '.wlk')
 
-	if (!models.length) throw new Error(`No hay ningún .wlk en la carpeta ${folder}`)
-	if (repls.length > 1) throw new Error(`Hay ${repls.length} archivos .wrepl en ${folder}: pasame cuál querés (${repls.join(', ')})`)
+	if (!models.length) throw new Error(say.noModelInFolder(folder))
+	if (repls.length > 1) throw new Error(say.severalRepls(folder, repls))
 
 	return {
 		replPath: repls.length ? join(folder, repls[0]) : undefined,
@@ -158,28 +129,23 @@ const fromFolder = async (folder) => {
 }
 
 /** Un nombre base: ejercicio1 -> ejercicio1.wlk + ejercicio1.wrepl (si existe) */
-const fromBaseName = async (base) => {
-	if (await isDirectory(base)) return fromFolder(base)
+const fromBaseName = async (base, say) => {
+	if (await isDirectory(base)) return fromFolder(base, say)
 
 	const model = `${base}.wlk`
-	if (!existsSync(model)) {
-		throw new Error(
-			`Con un solo parámetro busco <nombre>.wlk, y no encontré ${model}\n` +
-			'Si los archivos se llaman distinto, pasamelos: cli.mjs modelo.wlk [ejemplo.wrepl]'
-		)
-	}
+	if (!existsSync(model)) throw new Error(say.modelNotFound(model))
 	const repl = `${base}.wrepl`
 	return { replPath: existsSync(repl) ? repl : undefined, modelPaths: [model], base }
 }
 
 /** De los argumentos posicionales a los archivos concretos. */
-const resolveInputs = async (positional) => {
+const resolveInputs = async (positional, say) => {
 	const looksLikeBaseName = positional.length === 1 && !['.wlk', '.wrepl'].includes(extname(positional[0]))
-	if (looksLikeBaseName) return fromBaseName(positional[0])
+	if (looksLikeBaseName) return fromBaseName(positional[0], say)
 
 	const replPath = positional.find((path) => extname(path) === '.wrepl')
 	const modelPaths = positional.filter((path) => path !== replPath)
-	if (!modelPaths.length) throw new Error('Falta el archivo .wlk con el modelo')
+	if (!modelPaths.length) throw new Error(say.missingModel)
 	return {
 		replPath,
 		modelPaths,
@@ -202,6 +168,9 @@ const withPackageNames = (files, modelPaths) => {
 
 const main = async () => {
 	const options = parseArguments(process.argv.slice(2))
+	// parseArguments recorre todos los argumentos, asi que el idioma se conoce aunque
+	// alguno este mal escrito: hasta ese aviso sale en el idioma pedido
+	const say = messagesFor(MESSAGES, options.language)
 
 	// Antes un flag desconocido se tomaba por nombre de archivo, y el error que
 	// salia hablaba de un .wlk que no existe. Ahora se dice lo que es, y para los
@@ -209,21 +178,19 @@ const main = async () => {
 	if (options.unknown.length) {
 		for (const flag of options.unknown) {
 			const renamed = RENAMED_FLAGS[flag]
-			console.error(renamed
-				? `La opción ${flag} ahora se llama ${renamed}`
-				: `No conozco la opción ${flag} (probá --help)`)
+			console.error(renamed ? say.renamedFlag(flag, renamed) : say.unknownFlag(flag))
 		}
 		process.exit(1)
 	}
 
 	if (options.help || !options.positional.length) {
-		await printHelp()
+		console.log(messagesFor(HELP, options.language))
 		process.exit(options.help ? 0 : 1)
 	}
 
-	const { replPath, modelPaths, base } = await resolveInputs(options.positional)
+	const { replPath, modelPaths, base } = await resolveInputs(options.positional, say)
 
-	const files = withPackageNames(await readSources(modelPaths), modelPaths)
+	const files = withPackageNames(await readSources(modelPaths, false, { language: options.language }), modelPaths)
 	// Sin ejemplo el diagrama se genera igual: muestra el ambiente recién cargado,
 	// o sea los WKO del modelo y lo que cuelgue de ellos.
 	const replSource = replPath ? await readFile(replPath, 'utf8') : ''
@@ -258,6 +225,7 @@ const main = async () => {
 	const steps = []
 	const session = await run(files, replSource, {
 		mainFile,
+		language: options.language,
 		...(options.sequence ? {
 			onStart: (session) => { initialModel = snapshot(session) },
 			afterEach: (sentence, session, error) => steps.push({ sentence, error, model: snapshot(session) }),
@@ -270,7 +238,7 @@ const main = async () => {
 	// pie, con su error en rojo: ver dónde falló el ejemplo es justamente algo que
 	// conviene tener a la vista, no un motivo para no tener diagrama.
 	if (session.errors.length) {
-		console.error(`\n${session.errors.length} línea(s) del .wrepl fallaron al ejecutarse (quedan marcadas en rojo al pie del diagrama):`)
+		console.error(`\n${say.failedLines(session.errors.length)}`)
 		for (const error of session.errors) console.error(`  ✗ ${error.text}\n      ${error.message}`)
 		console.error('')
 	}
@@ -287,7 +255,11 @@ const main = async () => {
 	// diagrama de clases, para que una familia salga del mismo color en los dos.
 	// Se lee también el sidecar, porque su diccionario de tipos puede cambiar qué
 	// entidades terminan siendo polimórficas entre sí.
-	const colorIndex = colorIndexOf(extractModel(session.environment, await loadConfig({ sources: modelPaths })))
+	const colorIndex = colorIndexOf(extractModel(
+		session.environment,
+		await loadConfig({ sources: modelPaths, language: options.language }),
+		{ language: options.language },
+	))
 
 	const settings = {
 		name: options.title ?? `${basename(base)} — ${textsFor(options.language).objectDiagram}`,
@@ -303,7 +275,7 @@ const main = async () => {
 		// un objeto en un lugar incomodo, y se arregla moviendolo a mano.
 		report: ({ warnings }) => {
 			if (!warnings.length || options.quiet) return
-			console.log(`   ${warnings.length} flecha(s) que no pude desviar:`)
+			console.log(`   ${say.unroutedArrows(warnings.length)}`)
 			for (const warning of warnings) console.log(`     - ${warning}`)
 		},
 		header: [
@@ -316,20 +288,18 @@ const main = async () => {
 	const diagram = pages ? renderSequence(pages, settings) : renderObjectDiagram(model, { ...settings, failures })
 
 	await writeFile(output, diagram, 'utf8')
-	const resumen = `${model.objects.length} objetos, ${model.references.length} referencias, ${model.globals.length} globales, ${familyCountOf(model)} familias polimórficas`
-	console.log(pages
-		? `✓ ${output}  (${pages.length} páginas para ${steps.length} líneas · al final: ${resumen})`
-		: `✓ ${output}  (${resumen})`)
+	const summary = say.summary(model.objects.length, model.references.length, model.globals.length, familyCountOf(model))
+	console.log(`✓ ${output}  (${pages ? say.sequenceSummary(pages.length, steps.length, summary) : summary})`)
 	if (previousGeometry.size && !options.quiet) {
-		console.log(`   (conservé la posición de ${previousGeometry.size} elemento(s) del archivo anterior)`)
+		console.log(`   ${say.keptPositions(previousGeometry.size)}`)
 	}
 
 	if (!replPath && !options.quiet) {
-		console.log('   (no hay .wrepl: el diagrama muestra solo los WKO del modelo)')
+		console.log(`   ${say.withoutRepl}`)
 	}
 
 	if (!options.quiet && model.warnings.length) {
-		console.error(`\n${model.warnings.length} advertencia(s):`)
+		console.error(`\n${say.warnings(model.warnings.length)}`)
 		for (const warning of model.warnings) console.error(`  - ${warning}`)
 	}
 }

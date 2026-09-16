@@ -14,6 +14,23 @@
  */
 
 import { entityColorsOf } from '../wollok-uml/entity-colors.mjs'
+import { messagesFor } from '../wollok-uml/i18n.mjs'
+
+/** Lo que este modulo escribe por su cuenta en el archivo. Mismas claves en los dos idiomas. */
+const MESSAGES = {
+	en: {
+		// el nombre del diagrama cuando no hay archivo de salida
+		defaultName: 'class-diagram',
+		// los comentarios que separan las secciones del .puml
+		relationsSection: 'relationships',
+		notesSection: 'notes',
+	},
+	es: {
+		defaultName: 'diagrama-de-clases',
+		relationsSection: 'relaciones',
+		notesSection: 'notas',
+	},
+}
 
 const DEFAULT_SKINPARAMS = [
 	'skinparam classAttributeIconSize 0',
@@ -107,8 +124,8 @@ const noteBlock = (note) => [
 ]
 
 export const renderPlantUML = (model, options = {}) => {
+	const say = messagesFor(MESSAGES, options.language)
 	const settings = {
-		name: 'diagrama-de-clases',
 		title: undefined,
 		showAttributes: true,
 		showOperations: true,
@@ -117,6 +134,8 @@ export const renderPlantUML = (model, options = {}) => {
 		skinparams: DEFAULT_SKINPARAMS,
 		header: [],
 		...options,
+		// sin nombre (o con `name: undefined`), el de por defecto en el idioma pedido
+		name: options.name ?? say.defaultName,
 	}
 
 	const lines = [`@startuml ${settings.name}`]
@@ -148,7 +167,7 @@ export const renderPlantUML = (model, options = {}) => {
 	}
 
 	if (model.relations.length) {
-		lines.push("' ---------- relaciones ----------", '')
+		lines.push(`' ---------- ${say.relationsSection} ----------`, '')
 		const isStructural = (r) => ['inheritance', 'realization', 'mixin'].includes(r.kind)
 		const structural = model.relations.filter(isStructural)
 		// con --associations=attribute las relaciones se ven solo como atributos
@@ -162,7 +181,7 @@ export const renderPlantUML = (model, options = {}) => {
 	}
 
 	if (model.notes.length) {
-		lines.push("' ---------- notas ----------", '')
+		lines.push(`' ---------- ${say.notesSection} ----------`, '')
 		for (const note of model.notes) lines.push(...noteBlock(note), '')
 	}
 

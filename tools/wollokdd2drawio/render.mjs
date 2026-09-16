@@ -27,6 +27,17 @@ import { layout, isCircle } from './layout.mjs'
 import { routeReferences } from './routing.mjs'
 import { colorsFor } from './colors.mjs'
 import { textsFor } from './texts.mjs'
+import { messagesFor } from '../wollok-uml/i18n.mjs'
+
+/** Lo que este modulo le dice al usuario. Mismas claves en los dos idiomas. */
+const MESSAGES = {
+	en: {
+		unavoidableCrossing: (arrow) => `${arrow}: I couldn't find a way around without a huge detour, so it crosses some object`,
+	},
+	es: {
+		unavoidableCrossing: (arrow) => `${arrow}: no encontré por dónde esquivarla sin dar una vuelta enorme, así que queda cruzando algún objeto`,
+	},
+}
 
 const PADLOCK = '🔒'
 const REFERENCE_COLOR = '#000000'   // por defecto, toda referencia sale negra
@@ -251,7 +262,8 @@ const buildPage = ({ model, lines, name, index }, { ambiente, positions, globals
 		const reference = model.references[index]
 		// Todas las páginas comparten un layout, así que el mismo caso aparecería
 		// una vez por página: se avisa una sola.
-		warnings?.add(`${reference.from} -> ${reference.to}${reference.label ? ` (${reference.label})` : ''}: no encontré por dónde esquivarla sin dar una vuelta enorme, así que queda cruzando algún objeto`)
+		const arrow = `${reference.from} -> ${reference.to}${reference.label ? ` (${reference.label})` : ''}`
+		warnings?.add(messagesFor(MESSAGES, language).unavoidableCrossing(arrow))
 	}
 	model.references.forEach((reference, position) => {
 		cells.push(...edge(

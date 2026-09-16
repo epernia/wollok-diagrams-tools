@@ -18,9 +18,20 @@ import { layout, sizeOf, headerHeightOf, rowHeightOf } from './layout.mjs'
 import { routeAll, collisionsOf } from './routing.mjs'
 import { readGeometry } from '../wollok-uml/drawio-merge.mjs'
 import { entityColorsOf } from '../wollok-uml/entity-colors.mjs'
+import { messagesFor } from '../wollok-uml/i18n.mjs'
 
 export { readGeometry }
 
+/** Lo que este modulo escribe por su cuenta en el archivo. Mismas claves en los dos idiomas. */
+const MESSAGES = {
+	en: {
+		// el nombre de la pestaña cuando no hay titulo ni archivo de salida
+		defaultName: 'Class diagram',
+	},
+	es: {
+		defaultName: 'Diagrama de clases',
+	},
+}
 
 const STEREOTYPE_LABELS = { class: '«class»', wko: '«WKO»', interface: '«interface»', mixin: '«mixin»' }
 
@@ -316,8 +327,8 @@ const notePositionOf = (note, anchor, size, occupied) => {
 // ---------- el archivo ----------
 
 export const renderDrawio = (model, options = {}) => {
+	const say = messagesFor(MESSAGES, options.language)
 	const settings = {
-		name: 'Diagrama de clases',
 		showAttributes: true,
 		showOperations: true,
 		showMutability: true,
@@ -326,6 +337,8 @@ export const renderDrawio = (model, options = {}) => {
 		header: [],
 		previousGeometry: new Map(),
 		...options,
+		// sin nombre (o con `name: undefined`), el de por defecto en el idioma pedido
+		name: options.name ?? say.defaultName,
 	}
 
 	// las interfaces primero: son las que van arriba de todo

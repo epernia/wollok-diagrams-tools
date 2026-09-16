@@ -2,6 +2,17 @@
 
 import { readFile, readdir, stat } from 'node:fs/promises'
 import { join, extname, relative, sep } from 'node:path'
+import { DEFAULT_LANGUAGE, messagesFor } from './i18n.mjs'
+
+/** Lo que este modulo le dice al usuario. Mismas claves en los dos idiomas. */
+const MESSAGES = {
+	en: {
+		noWollokFiles: (sources) => `I couldn't find Wollok files in: ${sources.join(', ')}`,
+	},
+	es: {
+		noWollokFiles: (sources) => `No encontre archivos Wollok en: ${sources.join(', ')}`,
+	},
+}
 
 const SOURCE_EXTENSIONS = ['.wlk']
 const TEST_EXTENSIONS = ['.wtest', '.wpgm']
@@ -17,11 +28,14 @@ const wollokFilesIn = async (path, extensions) => {
 	return files.flat()
 }
 
-/** [{ name, content }] listo para buildEnvironment. */
-export const readSources = async (sources, includeTests = false) => {
+/**
+ * [{ name, content }] listo para buildEnvironment.
+ * @param options.language  uno de LANGUAGES: el idioma de los errores propios
+ */
+export const readSources = async (sources, includeTests = false, { language = DEFAULT_LANGUAGE } = {}) => {
 	const extensions = includeTests ? [...SOURCE_EXTENSIONS, ...TEST_EXTENSIONS] : SOURCE_EXTENSIONS
 	const paths = (await Promise.all(sources.map((source) => wollokFilesIn(source, extensions)))).flat()
-	if (!paths.length) throw new Error(`No encontre archivos Wollok en: ${sources.join(', ')}`)
+	if (!paths.length) throw new Error(messagesFor(MESSAGES, language).noWollokFiles(sources))
 
 	return Promise.all(paths.map(async (path) => ({
 		name: relative(process.cwd(), path).split(sep).join('/'),

@@ -16,8 +16,24 @@ import { existsSync } from 'node:fs'
 import { execSync } from 'node:child_process'
 import { join, dirname } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { DEFAULT_LANGUAGE, messagesFor } from './i18n.mjs'
 
-export const importWollokTs = async () => {
+/** Lo que este modulo le dice al usuario. Mismas claves en los dos idiomas. */
+const MESSAGES = {
+	en: {
+		wollokTsNotFound:
+			"I couldn't find wollok-ts. Install the Wollok CLI (npm i -g wollok-ts-cli),\n" +
+			'or install wollok-ts locally ONLY if these tools live outside a Wollok project.',
+	},
+	es: {
+		wollokTsNotFound:
+			'No encontre wollok-ts. Instala el CLI de Wollok (npm i -g wollok-ts-cli),\n' +
+			'o instala wollok-ts local SOLO si estas herramientas viven fuera de un proyecto Wollok.',
+	},
+}
+
+/** @param options.language  uno de LANGUAGES: el idioma de los errores propios */
+export const importWollokTs = async ({ language = DEFAULT_LANGUAGE } = {}) => {
 	try {
 		return await import('wollok-ts')
 	} catch { /* no esta instalado localmente: lo buscamos en el global */ }
@@ -45,8 +61,5 @@ export const importWollokTs = async () => {
 		if (path) return import(pathToFileURL(path).href)
 	} catch { /* npm no disponible */ }
 
-	throw new Error(
-		'No encontre wollok-ts. Instala el CLI de Wollok (npm i -g wollok-ts-cli),\n' +
-		'o instala wollok-ts local SOLO si estas herramientas viven fuera de un proyecto Wollok.'
-	)
+	throw new Error(messagesFor(MESSAGES, language).wollokTsNotFound)
 }

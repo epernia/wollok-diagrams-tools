@@ -22,6 +22,19 @@
  */
 
 import { importWollokTs } from './wollok.mjs'
+import { LANGUAGES, DEFAULT_LANGUAGE, isEnglish, messagesFor } from './i18n.mjs'
+
+/** Lo que este modulo le dice al usuario. Mismas claves en los dos idiomas. */
+const MESSAGES = {
+	en: {
+		packageNotFound: (fqn) => `I couldn't find the package ${fqn} (does the file name have unusual characters?)`,
+		noObjects: "I couldn't find any objects: the model doesn't define any WKO and the example doesn't create anything",
+	},
+	es: {
+		packageNotFound: (fqn) => `No pude encontrar el paquete ${fqn} (¿el nombre del archivo tiene caracteres raros?)`,
+		noObjects: 'No encontré ningún objeto: el modelo no define ningún WKO y el ejemplo no crea nada',
+	},
+}
 
 const WOLLOK_BASE = 'wollok.'
 const COLLECTIONS = ['wollok.lang.List', 'wollok.lang.Set', 'wollok.lang.Dictionary']
@@ -46,14 +59,12 @@ const LIST = 'wollok.lang.List'
  *
  * El articulo va pegado al nombre, sin espacio, que es como se lee un objeto en
  * un diagrama hecho a mano.
+ *
+ * Los modos, el de por defecto e isEnglish viven en i18n.mjs, que es donde los
+ * toman todas las herramientas; se reexportan aca para quien ya los importaba
+ * de este modulo.
  */
-export const LANGUAGES = ['en', 'enArticle', 'es', 'esInclusive', 'esGendered']
-
-/** El modo cuando no se pasa ningun flag de idioma. */
-export const DEFAULT_LANGUAGE = 'en'
-
-/** Si los textos de la herramienta van en ingles. Sin modo, vale el de por defecto. */
-export const isEnglish = (language) => ['en', 'enArticle'].includes(language ?? DEFAULT_LANGUAGE)
+export { LANGUAGES, DEFAULT_LANGUAGE, isEnglish }
 
 const FEMININE_ENDINGS = ['a', 'cion', 'sion', 'dad', 'tad', 'tud', 'umbre', 'ez', 'itis', 'esis']
 
@@ -172,10 +183,12 @@ export const sentencesOf = (source) => {
  * @param options.afterEach  se llama despues de CADA sentencia con
  *   (sentencia, session, error). Sirve para sacar una foto del ambiente en cada
  *   paso, que es lo que hace --genseq.
+ * @param options.language   uno de LANGUAGES: el idioma de los errores propios
  * @returns { interpreter, environment, replPackage, errors }
  */
-export const run = async (files, replSource, { mainFile, onStart, afterEach } = {}) => {
-	const wollok = await importWollokTs()
+export const run = async (files, replSource, { mainFile, onStart, afterEach, language = DEFAULT_LANGUAGE } = {}) => {
+	const say = messagesFor(MESSAGES, language)
+	const wollok = await importWollokTs({ language })
 	const { buildEnvironment, Interpreter, Evaluation, WRENatives, REPL, interprete } = wollok
 
 	const environment = buildEnvironment(files)
@@ -185,7 +198,7 @@ export const run = async (files, replSource, { mainFile, onStart, afterEach } = 
 	const main = mainFile ?? files[0].name
 	const fqn = main.replace(/\.[^./\\]+$/, '').split(/[\\/]/).join('.')
 	const entity = environment.getNodeOrUndefinedByFQN(fqn)
-	if (!entity) throw new Error(`No pude encontrar el paquete ${fqn} (¿el nombre del archivo tiene caracteres raros?)`)
+	if (!entity) throw new Error(say.packageNotFound(fqn))
 	environment.scope.register([REPL, entity])
 
 	const interpreter = new Interpreter(Evaluation.build(environment, WRENatives ?? {}))
@@ -331,7 +344,8 @@ export const createIdentityRegistry = () => ({ byRuntime: new Map(), used: new S
 
 /**
  * Camina el ambiente y arma el modelo de objetos.
- * @param options.language   uno de LANGUAGES: el articulo que lleva cada instancia
+ * @param options.language   uno de LANGUAGES: el articulo que lleva cada instancia,
+ *                           y el idioma de los avisos
  * @param options.feminine   nombres de clase que llevan "una" aunque la heuristica diga otra cosa
  *                           (el nombre COMPLETO de la clase, no su primera palabra).
  *                           Solo cuenta con language 'esGendered'.
@@ -478,7 +492,7 @@ export const buildObjectModel = ({ interpreter, environment, replPackage }, opti
 	})
 
 	if (!described.length) {
-		warnings.push('No encontré ningún objeto: el modelo no define ningún WKO y el ejemplo no crea nada')
+		warnings.push(messagesFor(MESSAGES, genders.language).noObjects)
 	}
 
 	return { objects: described, references, globals, warnings }

@@ -18,10 +18,36 @@ import { annotation, arg, isHidden, unknownUmlAnnotations } from './annotations.
 import { createTypeResolver, isCollectionType, elementTypeOf, withoutArticle } from './infer.mjs'
 import { entityNodesOf, instantiationsOf } from './entities.mjs'
 import { derivedInterfacesOf, familiesOf, wildcardsOf } from './families.mjs'
+import { messagesFor } from './i18n.mjs'
+
+/** Lo que este modulo le dice al usuario. Mismas claves en los dos idiomas. */
+const MESSAGES = {
+	en: {
+		definedInSeveralFiles: (name) => `${name}: is defined in more than one file; it's better to generate one diagram per file`,
+		unknownAnnotation: (name, annotation) => `${name}: unknown annotation @${annotation}`,
+		untypedAttribute: (owner, attribute) => `${owner}.${attribute}: couldn't infer the type (use @UmlType or the "types" dictionary)`,
+		twoPlaces: (name, slots) => `${name}: occupies two different places (${slots.join(', ')}), so it is left out of the families by place. If it plays both roles, declare them with @UmlImplements`,
+		polymorphicWithoutAbstraction: (owner, attribute, types) => `${owner}.${attribute}: receives ${types.join(', ')}, which are polymorphic with each other but have no interface or superclass joining them, so I couldn't infer the type (declare the interface with @UmlImplements, or use @UmlType)`,
+		notPolymorphic: (owner, attribute, types) => `${owner}.${attribute}: receives ${types.join(', ')}, which are not polymorphic with each other, so I couldn't infer the type (use @UmlType or the "types" dictionary)`,
+	},
+	es: {
+		definedInSeveralFiles: (name) => `${name}: esta definido en mas de un archivo; conviene generar un diagrama por archivo`,
+		unknownAnnotation: (name, annotation) => `${name}: anotacion desconocida @${annotation}`,
+		untypedAttribute: (owner, attribute) => `${owner}.${attribute}: no pude inferir el tipo (usa @UmlType o el diccionario "types")`,
+		twoPlaces: (name, slots) => `${name}: ocupa dos lugares distintos (${slots.join(', ')}), asi que queda fuera de las familias por lugar. Si cumple los dos roles, declaralos con @UmlImplements`,
+		polymorphicWithoutAbstraction: (owner, attribute, types) => `${owner}.${attribute}: recibe ${types.join(', ')}, que son polimorficos entre si pero no tienen una interfaz ni una superclase que los una, asi que no pude inferir el tipo (declara la interfaz con @UmlImplements, o usa @UmlType)`,
+		notPolymorphic: (owner, attribute, types) => `${owner}.${attribute}: recibe ${types.join(', ')}, que no son polimorficos entre si, asi que no pude inferir el tipo (usa @UmlType o el diccionario "types")`,
+	},
+}
 
 const ENTITY_KINDS = { Class: 'class', Singleton: 'wko', Mixin: 'mixin' }
 
+/**
+ * @param options.deriveInterfaces  false para no deducir interfaces de las familias
+ * @param options.language          uno de LANGUAGES: el idioma de model.warnings
+ */
 export const extractModel = (environment, config = {}, options = {}) => {
+	const say = messagesFor(MESSAGES, options.language)
 	const warnings = []
 	const dictionary = config.types ?? {}
 
@@ -33,7 +59,7 @@ export const extractModel = (environment, config = {}, options = {}) => {
 	const seenNames = new Set()
 	for (const node of entityNodes) {
 		if (seenNames.has(node.name)) {
-			warnings.push(`${node.name}: esta definido en mas de un archivo; conviene generar un diagrama por archivo`)
+			warnings.push(say.definedInSeveralFiles(node.name))
 		}
 		seenNames.add(node.name)
 	}
@@ -223,7 +249,7 @@ export const extractModel = (environment, config = {}, options = {}) => {
 
 	const entities = entityNodes.map((node) => {
 		for (const unknown of unknownUmlAnnotations(node)) {
-			warnings.push(`${node.name}: anotacion desconocida @${unknown}`)
+			warnings.push(say.unknownAnnotation(node.name, unknown))
 		}
 
 		const attributes = (node.fields ?? [])
@@ -239,7 +265,7 @@ export const extractModel = (environment, config = {}, options = {}) => {
 				const fromSlots = !declared && slotTypes.length > 0
 				const type = declared
 					?? (slotTypes.length === 1 ? entityAliases.get(slotTypes[0]) ?? slotTypes[0] : slotTypes[0])
-				if (!type) warnings.push(`${node.name}.${field.name}: no pude inferir el tipo (usa @UmlType o el diccionario "types")`)
+				if (!type) warnings.push(say.untypedAttribute(node.name, field.name))
 				return {
 					name: field.name,
 					type,
@@ -427,7 +453,7 @@ export const extractModel = (environment, config = {}, options = {}) => {
 	// no se puede elegir cual de los dos roles es "el" rol. Conviene decirlo, con
 	// la salida a mano incluida.
 	for (const [name, slots] of wildcardsOf(model)) {
-		warnings.push(`${name}: ocupa dos lugares distintos (${slots.join(', ')}), asi que queda fuera de las familias por lugar. Si cumple los dos roles, declaralos con @UmlImplements`)
+		warnings.push(say.twoPlaces(name, slots))
 	}
 
 	// --- las interfaces que el codigo no declara ---
@@ -563,8 +589,8 @@ export const extractModel = (environment, config = {}, options = {}) => {
 			const together = new Set(attribute.slotTypes.map((type) => family.get(type))).size === 1
 				&& attribute.slotTypes.every((type) => family.has(type))
 			warnings.push(together
-				? `${entity.name}.${attribute.name}: recibe ${attribute.slotTypes.join(', ')}, que son polimorficos entre si pero no tienen una interfaz ni una superclase que los una, asi que no pude inferir el tipo (declara la interfaz con @UmlImplements, o usa @UmlType)`
-				: `${entity.name}.${attribute.name}: recibe ${attribute.slotTypes.join(', ')}, que no son polimorficos entre si, asi que no pude inferir el tipo (usa @UmlType o el diccionario "types")`)
+				? say.polymorphicWithoutAbstraction(entity.name, attribute.name, attribute.slotTypes)
+				: say.notPolymorphic(entity.name, attribute.name, attribute.slotTypes))
 		}
 	}
 

@@ -12,9 +12,12 @@
  *
  * Tampoco los ids internos (`ambiente`, `paso-3`): no se ven, y son el ancla de
  * las posiciones guardadas. Traducirlos perderia lo acomodado a mano.
+ *
+ * Lo que se dice por consola no va aca sino en el catalogo MESSAGES del modulo
+ * que lo dice (cli.mjs, render.mjs); la ayuda, en help.mjs.
  */
 
-import { isEnglish } from '../wollok-uml/objects.mjs'
+import { messagesFor } from '../wollok-uml/i18n.mjs'
 
 const TEXTS = {
 	es: {
@@ -37,5 +40,5 @@ const TEXTS = {
 	},
 }
 
-/** @param language  uno de LANGUAGES de objects.mjs: los dos modos en ingles dan ingles */
-export const textsFor = (language) => TEXTS[isEnglish(language) ? 'en' : 'es']
+/** @param language  uno de LANGUAGES de i18n.mjs: los dos modos en ingles dan ingles */
+export const textsFor = (language) => messagesFor(TEXTS, language)
