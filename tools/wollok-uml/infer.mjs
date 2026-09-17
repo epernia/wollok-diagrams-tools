@@ -51,6 +51,105 @@ export const withoutArticle = (name) => {
 
 const singular = (name) => (name.endsWith('s') && name.length > 3 ? name.slice(0, -1) : name)
 
+/*
+ * --- nombres que hablan de una cantidad o de una unidad: Number ---
+ *
+ * `km`, `litros`, `unaCantidad`, `cantidadDeColores`, `tiempo`, `unosSegundos`:
+ * nadie guarda un String en una variable que se llama asi. Es el ultimo recurso
+ * de la heuristica por nombre: si el nombre coincide con una entidad (una clase
+ * `Tiempo`), gana la entidad.
+ *
+ * El nombre se parte en palabras (camelCase, guion bajo, numeros), sin tildes y
+ * sin el articulo del principio, y es Number si:
+ *   - la PRIMERA palabra es una cantidad o una unidad: `cantidadDeColores`,
+ *     `tiempoDeViaje`, `kmRecorridos` (en castellano el sustantivo va primero);
+ *   - o la ULTIMA: `colorCount`, `totalKm` (en ingles va al final);
+ *   - o una unidad viene despues de una preposicion: `unNumeroDeKm`,
+ *     `consumoPorLitro`, `distanceInMiles`.
+ *
+ * Las cantidades y medidas cuentan solo en singular: `precio` es un numero, pero
+ * `precios` es casi seguro una lista. Las unidades se listan con sus formas, que
+ * casi siempre son plurales (`litros`, `horas`), y quedan afuera las que confunden:
+ * `segundo` (el segundo jugador), `dia` y `mes` (una fecha, un nombre), `punto`.
+ *
+ * Y no es Number si la primera palabra dice otra cosa: una coleccion
+ * (`listaDeHoras`), una pregunta (`esMayorDeEdad`, `hasTime`) o un texto
+ * (`nombreDelMes`, `unidadDeTiempo`). Tampoco si la palabra que habla de la medida
+ * es el nombre de una entidad del diagrama: con una clase `Tiempo`,
+ * `tiempoGuardado` probablemente sea un Tiempo y no un numero.
+ */
+const QUANTITIES = new Set([
+	// castellano
+	'cantidad', 'cant', 'numero', 'nro', 'num', 'total', 'subtotal', 'contador', 'conteo', 'suma',
+	'promedio', 'porcentaje', 'proporcion', 'cociente', 'indice', 'max', 'min', 'maximo', 'minimo',
+	'limite', 'tope', 'umbral', 'puntaje', 'stock',
+	'monto', 'importe', 'precio', 'costo', 'coste', 'tarifa', 'saldo', 'sueldo', 'salario', 'deuda', 'presupuesto',
+	'tiempo', 'duracion', 'demora', 'edad', 'peso', 'masa', 'altura', 'alto', 'ancho', 'largo', 'longitud',
+	'profundidad', 'espesor', 'grosor', 'distancia', 'velocidad', 'aceleracion', 'temperatura', 'energia',
+	'potencia', 'capacidad', 'volumen', 'superficie', 'diametro', 'tamanio', 'tamano', 'presion', 'consumo',
+	'rendimiento', 'frecuencia',
+	// ingles
+	'amount', 'count', 'number', 'total', 'counter', 'sum', 'average', 'avg', 'mean', 'percentage',
+	'percent', 'ratio', 'quantity', 'qty', 'index', 'maximum', 'minimum', 'limit', 'threshold', 'score',
+	'price', 'cost', 'fee', 'fare', 'balance', 'salary', 'wage', 'debt', 'budget',
+	'time', 'duration', 'delay', 'age', 'weight', 'mass', 'height', 'width', 'length', 'depth', 'thickness',
+	'distance', 'speed', 'velocity', 'acceleration', 'temperature', 'energy', 'power', 'capacity', 'volume',
+	'size', 'diameter', 'pressure', 'consumption', 'frequency', 'rate',
+])
+const UNITS = new Set([
+	// castellano
+	'km', 'kms', 'kilometro', 'kilometros', 'metro', 'metros', 'mts', 'cm', 'cms', 'centimetro', 'centimetros',
+	'mm', 'milimetro', 'milimetros', 'litro', 'litros', 'lt', 'lts', 'ml', 'mililitro', 'mililitros',
+	'gramo', 'gramos', 'gr', 'grs', 'kg', 'kgs', 'kilo', 'kilos', 'kilogramo', 'kilogramos', 'tonelada', 'toneladas',
+	'segundos', 'seg', 'segs', 'minuto', 'minutos', 'mins', 'hora', 'horas', 'hs', 'hrs',
+	'dias', 'semanas', 'meses', 'anio', 'anios', 'anos', 'grado', 'grados', 'caloria', 'calorias', 'kcal',
+	'watt', 'watts', 'volt', 'volts', 'pesos', 'dolares', 'euros', 'puntos', 'veces', 'porciento',
+	'byte', 'bytes', 'kb', 'mb', 'gb', 'pixel', 'pixeles', 'px', 'cuotas', 'unidades', 'porciones', 'vueltas',
+	// ingles
+	'kilometers', 'kilometres', 'meters', 'metres', 'miles', 'feet', 'inches', 'liters', 'litres', 'gallons',
+	'grams', 'kilograms', 'pounds', 'lbs', 'ounces', 'oz', 'tons', 'tonnes', 'seconds', 'secs', 'minutes',
+	'hour', 'hours', 'days', 'weeks', 'months', 'year', 'years', 'degrees', 'calories', 'dollars',
+	'bytes', 'pixels', 'points', 'times', 'laps', 'units',
+])
+/** Primeras palabras que dicen que NO es un numero, aunque despues venga una unidad. */
+const NOT_A_NUMBER = new Set([
+	// colecciones
+	'lista', 'listado', 'coleccion', 'conjunto', 'historial', 'registro', 'registros', 'diccionario', 'mapa',
+	'list', 'collection', 'set', 'array', 'history', 'map', 'dictionary',
+	// preguntas: son Boolean
+	'es', 'esta', 'estan', 'son', 'tiene', 'tienen', 'puede', 'pueden', 'hay', 'fue', 'debe',
+	'is', 'are', 'has', 'have', 'can', 'was', 'should', 'must',
+	// textos y cosas que no son cantidades
+	'nombre', 'descripcion', 'texto', 'titulo', 'mensaje', 'etiqueta', 'fecha', 'unidad', 'tipo', 'formato',
+	'name', 'description', 'text', 'title', 'message', 'label', 'date', 'unit', 'type', 'format',
+])
+const NUMBER_ARTICLES = new Set([
+	'un', 'una', 'unos', 'unas', 'el', 'la', 'los', 'las', 'lo', 'mi', 'mis', 'su', 'sus', 'tu', 'tus',
+	'otro', 'otra', 'otros', 'otras', 'nuevo', 'nueva',
+	'a', 'an', 'the', 'my', 'some', 'other', 'new',
+])
+const PREPOSITIONS = new Set(['de', 'del', 'en', 'por', 'x', 'of', 'in', 'per'])
+
+/** unNumeroDeKm -> [un, numero, de, km] | tamañoDelCandado -> [tamano, del, candado] */
+const wordsOf = (name) => (name.normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+	.match(/[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+/g) ?? [])
+	.map((word) => word.toLowerCase())
+
+/**
+ * Si el nombre habla de una cantidad o de una unidad: ver el comentario de arriba.
+ * @param entityNames  nombres de las entidades, en minusculas: esas palabras no cuentan como medida
+ */
+export const isNumericName = (name, entityNames = new Set()) => {
+	const words = wordsOf(name ?? '')
+	while (words.length > 1 && NUMBER_ARTICLES.has(words[0])) words.shift()
+	if (!words.length || NOT_A_NUMBER.has(words[0])) return false
+	const measures = (word) => (QUANTITIES.has(word) || UNITS.has(word)) && !entityNames.has(word)
+	const unit = (word) => UNITS.has(word) && !entityNames.has(word)
+	return measures(words[0])
+		|| measures(words[words.length - 1])
+		|| words.some((word, index) => index > 0 && PREPOSITIONS.has(words[index - 1]) && unit(word))
+}
+
 export const isCollectionType = (type) => /^(List|Set)\b/.test(type ?? '')
 export const elementTypeOf = (type) => type?.match(/^(?:List|Set)<(.+)>$/)?.[1]
 
@@ -76,7 +175,8 @@ export const createTypeResolver = ({ entityNames, entityAliases = new Map(), dic
 			// es de tipo Nivel, no de tipo principiante
 			if (found) return entityAliases.get(found) ?? found
 		}
-		return undefined
+		// ninguna entidad se llama asi: si el nombre habla de una cantidad, es un numero
+		return isNumericName(name, new Set(byLowerCase.keys())) ? 'Number' : undefined
 	}
 
 	/** Tipo declarado a mano para una referencia: sidecar. */

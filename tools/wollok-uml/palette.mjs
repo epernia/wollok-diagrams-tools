@@ -188,6 +188,58 @@ const colorAt = (index, pastel) => {
 	return pastel ? generatedPastel(rest) : generatedAccessible(rest)
 }
 
+/*
+ * Los colores del texto de las filas en los diagramas estaticos, como los de un
+ * editor de codigo: el tipo (`: Number`, que ademas va en italica), el valor
+ * inicial (`= 100`) y las palabras `const` y `var`. Son los mismos para las tres
+ * paletas, porque colorean letras y no el relleno de las cajas.
+ *
+ *   Number                        #098658
+ *   String                        #313069
+ *   Date                          #8250DF
+ *   Boolean                       #8250DF
+ *   coleccion                     #A31515   (List, Set, Dictionary, con o sin <...>)
+ *   cualquier otro objeto         #267FA6   (Persona, Celular, samsung...)
+ *   var                           #0AA115
+ *   const                         #953800
+ */
+export const CODE_COLORS = {
+	number: '#098658',
+	text: '#313069',
+	date: '#8250DF',
+	boolean: '#8250DF', // '#AF00DB',
+	collection: '#A31515',
+	object: '#267FA6',
+	var: '#0AA115',
+	const: '#953800',
+}
+
+/** El color de un tipo del modelo: `List<Pertenencia>` es una coleccion, `Persona` un objeto. */
+export const typeColorOf = (type) => {
+	if (type === 'Number') return CODE_COLORS.number
+	if (type === 'String') return CODE_COLORS.text
+	if (type === 'Date') return CODE_COLORS.date
+	if (type === 'Boolean') return CODE_COLORS.boolean
+	if (/^(List|Set|Dictionary)\b/.test(type ?? '')) return CODE_COLORS.collection
+	return CODE_COLORS.object
+}
+
+/**
+ * El color de un valor inicial, por como esta escrito. En el modelo solo llegan
+ * literales y referencias (ver literalTextOf en extract.mjs): `100`, `"hola"`,
+ * `true`, o el nombre de un objeto como `samsung`.
+ */
+export const valueColorOf = (value) => {
+	const text = String(value).trim()
+	if (/^-?\d+(\.\d+)?$/.test(text)) return CODE_COLORS.number
+	if (text.startsWith('"') || text.startsWith("'")) return CODE_COLORS.text
+	if (text === 'true' || text === 'false') return CODE_COLORS.boolean
+	return CODE_COLORS.object
+}
+
+/** El color de la palabra `const` o `var`. */
+export const mutabilityColorOf = (mutability) => CODE_COLORS[mutability] ?? CODE_COLORS.object
+
 /** Los nombres validos; el primero es el de por defecto. */
 export const PALETTE_NAMES = ['wollok', 'colourblind', 'pastel']
 

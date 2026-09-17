@@ -18,6 +18,7 @@ import { layout, sizeOf, headerHeightOf, rowHeightOf } from './layout.mjs'
 import { routeAll, collisionsOf } from './routing.mjs'
 import { readGeometry } from '../wollok-uml/drawio-merge.mjs'
 import { entityColorsOf } from '../wollok-uml/entity-colors.mjs'
+import { typeColorOf, valueColorOf, mutabilityColorOf } from '../wollok-uml/palette.mjs'
 import { messagesFor } from '../wollok-uml/i18n.mjs'
 
 export { readGeometry }
@@ -73,18 +74,60 @@ const escapeXml = (text) => String(text)
 
 // ---------- el contenido de cada caja ----------
 
-const attributeText = (attribute, options) => {
-	const mutability = options.showMutability && !attribute.inherited ? `${attribute.mutability} ` : ''
-	const type = attribute.type ? ` : ${attribute.type}` : ''
-	const value = attribute.defaultValue !== undefined ? ` = ${attribute.defaultValue}` : ''
-	return `${attribute.visibility} ${mutability}${attribute.name}${type}${value}`
+/*
+ * Una fila se arma con pedazos: texto comun y pedazos pintados (el tipo, el valor
+ * inicial, `const`/`var`). De ahi salen dos versiones:
+ *   - `text`, el texto plano, que es lo que mide el layout para el ancho de la caja;
+ *   - `html`, lo que va en la celda (las filas son html=1), con cada pedazo de su
+ *     color (ver CODE_COLORS en palette.mjs) y los tipos en italica.
+ *
+ * En el html todo se escapa, no solo lo pintado: sin eso `List<Pertenencia>` le
+ * llegaba a draw.io como un tag <Pertenencia>. drawio2wollok lee la fila de vuelta
+ * sacando los tags y decodificando, asi que ve el mismo texto plano.
+ */
+const escapeHtml = (text) => String(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+const painted = (text, color, { italic = false } = {}) => ({ text: String(text), color, italic })
+const typed = (type) => painted(type, typeColorOf(type), { italic: true })
+
+const htmlOf = (piece) => {
+	if (typeof piece === 'string') return escapeHtml(piece)
+	const colored = `<font color="${piece.color}">${escapeHtml(piece.text)}</font>`
+	return piece.italic ? `<i>${colored}</i>` : colored
 }
 
-const operationText = (operation) => {
-	const parameters = operation.parameters
-		.map((parameter) => (parameter.type ? `${parameter.name} : ${parameter.type}` : parameter.name))
-		.join(', ')
-	return `+ ${operation.name}(${parameters})${operation.returns ? ` : ${operation.returns}` : ''}`
+const rowOf = (pieces) => ({
+	text: pieces.map((piece) => (typeof piece === 'string' ? piece : piece.text)).join(''),
+	html: pieces.map(htmlOf).join(''),
+})
+
+const attributeRow = (attribute, options) => {
+	const showMutability = options.showMutability && !attribute.inherited
+	return rowOf([
+		`${attribute.visibility} `,
+		...(showMutability ? [painted(attribute.mutability, mutabilityColorOf(attribute.mutability)), ' '] : []),
+		attribute.name,
+		...(attribute.type ? [' : ', typed(attribute.type)] : []),
+		...(attribute.defaultValue !== undefined
+			? [' = ', painted(attribute.defaultValue, valueColorOf(attribute.defaultValue))]
+			: []),
+	])
+}
+
+// Con parametros, un espacio adentro de cada parentesis: `volar( kms : Number )`.
+// Sin parametros, pegados: `volar()`.
+const operationRow = (operation) => {
+	const parameters = operation.parameters.flatMap((parameter, index) => [
+		...(index ? [', '] : []),
+		parameter.name,
+		...(parameter.type ? [' : ', typed(parameter.type)] : []),
+	])
+	return rowOf([
+		`+ ${operation.name}(`,
+		...(parameters.length ? [' ', ...parameters, ' '] : []),
+		')',
+		...(operation.returns ? [' : ', typed(operation.returns)] : []),
+	])
 }
 
 const boxOf = (entity, options) => {
@@ -95,11 +138,11 @@ const boxOf = (entity, options) => {
 
 	const rows = [
 		...attributes.map((attribute, index) => ({
-			id: `attr:${attribute.name}:${index}`, kind: 'row', text: attributeText(attribute, options),
+			id: `attr:${attribute.name}:${index}`, kind: 'row', ...attributeRow(attribute, options),
 		})),
 		...(attributes.length && operations.length ? [{ id: 'separator', kind: 'separator', text: '' }] : []),
 		...operations.map((operation, index) => ({
-			id: `op:${operation.name}:${index}`, kind: 'row', text: operationText(operation),
+			id: `op:${operation.name}:${index}`, kind: 'row', ...operationRow(operation),
 		})),
 	]
 
@@ -138,7 +181,7 @@ const boxCells = (box, position, colors) => {
 		const height = rowHeightOf(row)
 		const style = row.kind === 'separator' ? SEPARATOR_STYLE : ROW_STYLE
 		cells.push(
-			`        <mxCell id="${escapeXml(`${box.name}::${row.id}`)}" value="${escapeXml(row.text)}" style="${style}" vertex="1" parent="${escapeXml(box.name)}">`,
+			`        <mxCell id="${escapeXml(`${box.name}::${row.id}`)}" value="${escapeXml(row.html ?? row.text)}" style="${style}" vertex="1" parent="${escapeXml(box.name)}">`,
 			`          <mxGeometry y="${y}" width="${box.width}" height="${height}" as="geometry" />`,
 			'        </mxCell>',
 		)

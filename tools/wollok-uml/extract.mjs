@@ -423,6 +423,9 @@ export const extractModel = (environment, config = {}, options = {}) => {
 		for (const method of node.methods ?? []) {
 			if (!method.sourceMap) continue
 			for (const parameter of method.parameters ?? []) {
+				// un parametro que ya se sabe que es un numero (`unaCantidad`, `km`) no
+				// cumple el rol de ninguna entidad: no puede nombrar una interfaz
+				if (typeOfParameter(parameter) === 'Number') continue
 				const sent = new Set()
 				for (const send of method.descendants ?? []) {
 					if (send.kind !== 'Send' || EVERY_OBJECT_UNDERSTANDS.has(send.message)) continue

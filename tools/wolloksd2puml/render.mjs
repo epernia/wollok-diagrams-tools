@@ -14,6 +14,7 @@
  */
 
 import { entityColorsOf } from '../wollok-uml/entity-colors.mjs'
+import { typeColorOf, valueColorOf, mutabilityColorOf } from '../wollok-uml/palette.mjs'
 import { messagesFor } from '../wollok-uml/i18n.mjs'
 
 /** Lo que este modulo escribe por su cuenta en el archivo. Mismas claves en los dos idiomas. */
@@ -69,19 +70,35 @@ const arrow = (relation, symbol) => {
 	return `${from} ${symbol} ${to}${relation.label ? ` : ${relation.label}` : ''}`
 }
 
+/*
+ * Los mismos colores que en draw.io (ver CODE_COLORS en palette.mjs): el tipo, en
+ * italica, el valor inicial y las palabras const/var. PlantUML entiende <color> e
+ * <i> adentro de los miembros de una clase, sigue reconociendo la visibilidad del
+ * principio, y un generico como `List<Pertenencia>` se sigue viendo tal cual:
+ * <Pertenencia> no es un tag suyo.
+ */
+const colored = (text, color) => `<color:${color}>${text}</color>`
+const typeText = (type) => `<i>${colored(type, typeColorOf(type))}</i>`
+
 const attributeLine = (attribute, options) => {
-	const mutability = options.showMutability && !attribute.inherited ? `${attribute.mutability} ` : ''
-	const type = attribute.type ? ` : ${attribute.type}` : ''
-	const value = attribute.defaultValue !== undefined ? ` = ${attribute.defaultValue}` : ''
+	const mutability = options.showMutability && !attribute.inherited
+		? `${colored(attribute.mutability, mutabilityColorOf(attribute.mutability))} `
+		: ''
+	const type = attribute.type ? ` : ${typeText(attribute.type)}` : ''
+	const value = attribute.defaultValue !== undefined
+		? ` = ${colored(attribute.defaultValue, valueColorOf(attribute.defaultValue))}`
+		: ''
 	return `    ${attribute.visibility} ${mutability}${attribute.name}${type}${value}`
 }
 
+// Con parametros, un espacio adentro de cada parentesis: `volar( kms : Number )`.
+// Sin parametros, pegados: `volar()`.
 const operationLine = (operation) => {
 	const parameters = operation.parameters
-		.map((p) => (p.type ? `${p.name} : ${p.type}` : p.name))
+		.map((p) => (p.type ? `${p.name} : ${typeText(p.type)}` : p.name))
 		.join(', ')
-	const returns = operation.returns ? ` : ${operation.returns}` : ''
-	return `    + ${operation.name}(${parameters})${returns}`
+	const returns = operation.returns ? ` : ${typeText(operation.returns)}` : ''
+	return `    + ${operation.name}(${parameters ? ` ${parameters} ` : ''})${returns}`
 }
 
 /*

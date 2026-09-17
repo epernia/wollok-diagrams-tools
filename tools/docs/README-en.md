@@ -103,6 +103,13 @@ from strongest to weakest:
 - known messages (`.size()` → `Number`, `.isEmpty()` → `Boolean`,
 `>` `and` `not` → `Boolean`, `*` `-` → `Number`, `.map()` → `List`); 
 - `self.otherMethod()` → whatever that method returns.
+4. Name heuristic: `pertenencia` → `Pertenencia`, `unaMedida` → `Medida`
+(it drops the article and the plural). And if no entity has that name, a name
+about a **quantity or a unit**, in Spanish or English, is a `Number`: `km`,
+`litros`, `hours`, `unosSegundos`, `unaCantidad`, `cantidadDeColores`,
+`colorCount`. It doesn't apply when the name starts by saying something else
+(`listaDeHoras`, `isOld`, `nombreDelMes`), nor to the plural of a measure
+(`prices` is a list).
 
 ## VSCode Integration
 

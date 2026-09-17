@@ -110,7 +110,12 @@ Wollok no declara tipos, así que se deducen. De más fuerte a más débil:
    - el tipo de elemento de una colección vacía se busca en los `add` de los
      métodos: `botin.add(pertenencia)` → `List<Pertenencia>`.
 4. Heurística por nombre: `pertenencia` → `Pertenencia`, `unaMedida` → `Medida`
-   (saca el artículo y el plural).
+   (saca el artículo y el plural). Y si ninguna entidad se llama así, un nombre
+   que habla de una **cantidad o una unidad**, en castellano o en inglés, es
+   `Number`: `km`, `litros`, `gramos`, `tiempo`, `horas`, `unosSegundos`,
+   `unaCantidad`, `cantidadDeColores`, `unNumeroDeKm`, `colorCount`. No cuenta si
+   el nombre empieza diciendo otra cosa (`listaDeHoras`, `esMayorDeEdad`,
+   `nombreDelMes`), ni el plural de una medida (`precios` es una lista).
 
 Un método sin `return` es un comando y se dibuja sin tipo de retorno.
 
@@ -118,14 +123,14 @@ Un método sin `return` es un comando y se dibuja sin tipo de retorno.
 conviene editar:
 
 ```
-5 thing(s) I couldn't infer from the code:
+1 thing(s) I couldn't infer from the code:
   - Pertenencia.dificultadBasica: couldn't infer the type (use @UmlType or the "types" dictionary)
 ```
 
 Con `--eslang` (o cualquier `--es...`) el mismo reporte sale en castellano:
 
 ```
-5 cosa(s) que no pude deducir del codigo:
+1 cosa(s) que no pude deducir del codigo:
   - Pertenencia.dificultadBasica: no pude inferir el tipo (usa @UmlType o el diccionario "types")
 ```
 
