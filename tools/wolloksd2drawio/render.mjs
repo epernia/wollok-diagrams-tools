@@ -40,6 +40,9 @@ const STEREOTYPE_LABELS = { class: '«class»', wko: '«WKO»', interface: '«in
 const stereotypeLabelOf = (entity) =>
 	entity.kind === 'class' && entity.isAbstract ? '«abstract class»' : STEREOTYPE_LABELS[entity.kind]
 
+/** Menos que esto entre dos cajas vecinas ya no deja pasillo para las flechas. */
+const CROWDED_GAP = 40
+
 const BOX_STYLE = 'swimlane;html=1;fontStyle=1;align=center;verticalAlign=top;childLayout=stackLayout;horizontal=1;horizontalStack=0;resizeParent=1;resizeParentMax=0;collapsible=0;marginBottom=0;'
 const ROW_STYLE = 'text;html=1;strokeColor=none;fillColor=none;align=left;verticalAlign=middle;spacingLeft=6;spacingRight=6;overflow=hidden;rotatable=0;points=[[0,0.5],[1,0.5]];portConstraint=eastwest;whiteSpace=wrap;'
 const SEPARATOR_STYLE = 'line;html=1;strokeWidth=1;fillColor=none;align=left;verticalAlign=middle;spacingTop=-1;spacingLeft=3;spacingRight=3;rotatable=0;labelPosition=right;points=[];portConstraint=eastwest;'
@@ -166,8 +169,10 @@ const boxOf = (entity, options) => {
 
 /** @param colors  Map(nombre -> { fill, stroke }) de entityColorsOf, completo */
 const boxCells = (box, position, colors) => {
+	// Como las filas, el titulo es HTML adentro de un atributo XML: se escapa dos
+	// veces. Sin eso, un @UmlStereotype con & o < dejaba un .drawio que no abre.
 	const title = box.stereotypes.length
-		? `${box.stereotypes.join(' ')}&lt;br&gt;&lt;b&gt;${escapeXml(box.name)}&lt;/b&gt;`
+		? `${escapeXml(escapeHtml(box.stereotypes.join(' ')))}&lt;br&gt;&lt;b&gt;${escapeXml(escapeHtml(box.name))}&lt;/b&gt;`
 		: escapeXml(box.name)
 
 	const cells = [
@@ -395,6 +400,22 @@ export const renderDrawio = (model, options = {}) => {
 		.filter((box) => positions.has(box.name))
 		.map((box) => ({ name: box.name, ...positions.get(box.name), width: box.width, height: box.height }))
 
+	// Una caja que conserva su lugar del archivo anterior pero ahora mide MAS (un
+	// archivo de cuando el ancho tenia tope en 420, o una fila que se alargo) puede
+	// meterse en el pasillo de la columna de al lado, que es por donde pasan las
+	// flechas. No se la mueve —ese lugar lo eligio alguien—: se avisa, y --relayout
+	// vuelve a acomodar todo.
+	//
+	// Cuenta cualquier caja que antes quedaba a su derecha, a la altura que sea: el
+	// pasillo corre de punta a punta, y se angosta aunque la vecina este mas abajo.
+	const crowded = placedBoxes.filter((box) => {
+		const before = settings.previousGeometry.get(box.name)
+		if (!before?.width || box.width <= before.width) return false
+		return placedBoxes.some((other) => other !== box
+			&& other.x >= box.x + before.width
+			&& other.x < box.x + box.width + CROWDED_GAP)
+	}).map((box) => box.name)
+
 	// El hueco entre un padre y sus hijos esta reservado para el peine de flechas
 	// de herencia. Si una nota se mete ahi, el tronco no tiene por donde pasar.
 	const rectFor = (name) => placedBoxes.find((box) => box.name === name)
@@ -434,7 +455,7 @@ export const renderDrawio = (model, options = {}) => {
 	const { routes, warnings, rects } = routeAll(boxes, model.relations, positions, noteRects)
 	const boxesByName = new Map(boxes.map((box) => [box.name, box]))
 	const collisions = routes.reduce((total, route) => total + collisionsOf(route, rects).length, 0)
-	settings.report?.({ warnings, collisions, edges: routes.length })
+	settings.report?.({ warnings, collisions, edges: routes.length, crowded })
 
 	// El color de cada caja lo decide el nucleo, igual para draw.io y PlantUML.
 	const colors = entityColorsOf(model, {
@@ -451,7 +472,9 @@ export const renderDrawio = (model, options = {}) => {
 
 	return [
 		'<?xml version="1.0" encoding="UTF-8"?>',
-		...settings.header.map((line) => `<!-- ${line} -->`),
+		// Un comentario XML no puede tener "--" adentro: una ruta como
+		// D:/mis--cosas/x.wlk dejaba un .drawio que no abre.
+		...settings.header.map((line) => `<!-- ${String(line).replace(/--/g, '- -')} -->`),
 		'<mxfile host="wolloksd2drawio" type="device" compressed="false">',
 		`  <diagram id="${slug(settings.name)}" name="${escapeXml(settings.name)}">`,
 		'    <mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="826" math="0" shadow="0">',

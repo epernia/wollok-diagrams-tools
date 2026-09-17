@@ -71,6 +71,7 @@ tools/
 │   ├── config.mjs         loads the .uml.json sidecar if it exists
 │   ├── sources.mjs        searching for and reading .wlk files
 │   ├── drawio-merge.mjs   positions from the previous .drawio (used by both .drawio generators)
+│   ├── text-width.mjs     how wide a text is in draw.io's font (sizes the class boxes)
 │   ├── wollok.mjs         source of wollok-ts
 │   ├── i18n.mjs           language of the messages (English, or Spanish with --es...)
 │   └── generator.mjs      common workflow and command-line options

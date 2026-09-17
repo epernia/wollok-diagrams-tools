@@ -25,10 +25,25 @@
  * dentro de un proyecto Wollok rompe `wollok test` (ver tools/wollok-uml/wollok.mjs).
  */
 
-const CHARACTER_WIDTH = 6.6
-const BOLD_CHARACTER_WIDTH = 7.4
-const MIN_WIDTH = 180
-const MAX_WIDTH = 420
+import { textWidthOf } from '../wollok-uml/text-width.mjs'
+
+/*
+ * El ancho de una caja es el de su renglon mas largo, medido con los anchos reales
+ * de la letra (text-width.mjs), mas un margen:
+ *
+ *   - una fila entra en un renglon si a la celda le sobran 14px sobre el texto
+ *     (spacingLeft y spacingRight de 6, mas 2 de draw.io). Con menos, draw.io la
+ *     parte en dos y, como la fila tiene alto fijo, la segunda mitad no se ve.
+ *     ROW_PADDING deja 6px mas de resguardo, por si otra maquina dibuja la letra
+ *     apenas mas ancha;
+ *   - el encabezado no se parte nunca, pero sin margen el nombre toca el borde.
+ *
+ * No hay ancho maximo: una fila mas ancha que la caja se corta, y es preferible una
+ * caja ancha a un metodo que no se lee.
+ */
+const MIN_WIDTH = 100
+const ROW_PADDING = 20
+const HEADER_PADDING = 24
 const ROW_HEIGHT = 24
 const SEPARATOR_HEIGHT = 8
 const HEADER_HEIGHT = 30
@@ -43,15 +58,15 @@ const ALIGN_PASSES = 3      // pasadas de alineacion (ver "enderezado")
 
 const STRUCTURAL = ['inheritance', 'realization', 'mixin']
 
-const widthOf = (text, characterWidth = CHARACTER_WIDTH) => text.length * characterWidth + 24
-
 /** Alto y ancho de una caja, a partir de lo que va adentro. */
 export const sizeOf = (box) => {
 	const widths = [
-		widthOf(box.name, BOLD_CHARACTER_WIDTH),
-		...box.rows.map((row) => widthOf(row.text)),
+		// el encabezado: «estereotipos» en negrita y el nombre en <b>, que sale mas grueso
+		textWidthOf((box.stereotypes ?? []).join(' '), { weight: 'bold' }) + HEADER_PADDING,
+		textWidthOf(box.name, { weight: 'black' }) + HEADER_PADDING,
+		...box.rows.map((row) => textWidthOf(row.text) + ROW_PADDING),
 	]
-	const width = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.ceil(Math.max(...widths))))
+	const width = Math.max(MIN_WIDTH, Math.ceil(Math.max(...widths)))
 	const height = box.headerHeight
 		+ box.rows.reduce((total, row) => total + (row.kind === 'separator' ? SEPARATOR_HEIGHT : ROW_HEIGHT), 0)
 	return { width, height }

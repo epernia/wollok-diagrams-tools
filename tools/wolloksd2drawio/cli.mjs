@@ -23,10 +23,12 @@ const MESSAGES = {
 	en: {
 		keptPositions: (count) => `(I kept the position of ${count} box(es) from the previous file)`,
 		blockedArrows: (count) => `${count} arrow(s) without a clear path (some box is in the way):`,
+		crowdedBoxes: (count) => `${count} box(es) kept their place but got wider, and now crowd a neighbour (regenerate with --relayout to lay them out again):`,
 	},
 	es: {
 		keptPositions: (count) => `(conservo la posicion de ${count} caja(s) del archivo anterior)`,
 		blockedArrows: (count) => `${count} flecha(s) sin camino libre (alguna caja tapa el paso):`,
+		crowdedBoxes: (count) => `${count} caja(s) conservaron su lugar pero quedaron mas anchas, y ahora aprietan a una vecina (regenera con --relayout para volver a acomodarlas):`,
 	},
 }
 
@@ -50,8 +52,13 @@ runGenerator({
 		return renderDrawio(model, {
 			// El ruteo verifica lo que dibuja. Si alguna flecha no encontro camino
 			// limpio conviene enterarse, en vez de descubrirlo al abrir el archivo.
-			report: ({ warnings }) => {
-				if (!warnings.length || options.quiet) return
+			report: ({ warnings, crowded = [] }) => {
+				if (options.quiet) return
+				if (crowded.length) {
+					console.log(`   ${say.crowdedBoxes(crowded.length)}`)
+					for (const name of crowded) console.log(`     - ${name}`)
+				}
+				if (!warnings.length) return
 				console.log(`   ${say.blockedArrows(warnings.length)}`)
 				for (const warning of warnings) console.log(`     - ${warning}`)
 			},

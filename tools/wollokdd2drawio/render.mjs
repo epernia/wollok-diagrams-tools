@@ -348,7 +348,9 @@ export const renderPages = (pages, options = {}) => {
 
 	return [
 		'<?xml version="1.0" encoding="UTF-8"?>',
-		...settings.header.map((line) => `<!-- ${line} -->`),
+		// Un comentario XML no puede tener "--" adentro: una ruta como
+		// D:/mis--cosas/x.wlk dejaba un .drawio que no abre.
+		...settings.header.map((line) => `<!-- ${String(line).replace(/--/g, '- -')} -->`),
 		'<mxfile host="wollokdd2drawio" type="device" compressed="false">',
 		...pageCells,
 		'</mxfile>',
