@@ -588,6 +588,21 @@
                     "workbench.action.closeActiveEditor"
                 ]
             }
+        },
+        {
+            "id": "lanzarSimpleBrowser",
+            "type": "command",
+            "command": "runCommands",
+            "args": {
+                "commands": [
+                    {
+                        "command": "simpleBrowser.show",
+                        "args": [
+                            "http://localhost:3000/"
+                        ]
+                    }
+                ]
+            }
         }
     ]
 }

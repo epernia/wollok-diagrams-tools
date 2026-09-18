@@ -91,14 +91,27 @@ const attributeLine = (attribute, options) => {
 	return `    ${attribute.visibility} ${mutability}${attribute.name}${type}${value}`
 }
 
-// Con parametros, un espacio adentro de cada parentesis: `volar( kms : Number )`.
-// Sin parametros, pegados: `volar()`.
-const operationLine = (operation) => {
+/*
+ * Igual que en draw.io: un metodo que redefine al de arriba lleva ⬆️ adelante, y en
+ * la caja de una interfaz no se pone.
+ *
+ *   ⬆️ + llamar( unaDuracion : Number )
+ *
+ * Con el emoji adelante, PlantUML deja de dibujar el + como su iconito de
+ * visibilidad y lo escribe tal cual, que es justo como se pidio que se lea.
+ *
+ * Con parametros, un espacio adentro de cada parentesis: `volar( kms : Number )`.
+ * Sin parametros, pegados: `volar()`.
+ */
+const OVERRIDE_MARK = '⬆️'
+
+const operationLine = (operation, showOverride) => {
 	const parameters = operation.parameters
 		.map((p) => (p.type ? `${p.name} : ${typeText(p.type)}` : p.name))
 		.join(', ')
 	const returns = operation.returns ? ` : ${typeText(operation.returns)}` : ''
-	return `    + ${operation.name}(${parameters ? ` ${parameters} ` : ''})${returns}`
+	const mark = showOverride && operation.override ? `${OVERRIDE_MARK} ` : ''
+	return `    ${mark}+ ${operation.name}(${parameters ? ` ${parameters} ` : ''})${returns}`
 }
 
 /*
@@ -125,7 +138,9 @@ const entityBlock = (entity, options, color) => {
 	const attributes = options.showAttributes
 		? entity.attributes.filter((a) => options.associations !== 'arrow' || !a.isRelation).map((a) => attributeLine(a, options))
 		: []
-	const operations = options.showOperations ? entity.operations.map(operationLine) : []
+	const operations = options.showOperations
+		? entity.operations.map((operation) => operationLine(operation, entity.kind !== 'interface'))
+		: []
 
 	const body = [...attributes, ...(attributes.length && operations.length ? ['    --'] : []), ...operations]
 

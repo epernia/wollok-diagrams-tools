@@ -303,6 +303,8 @@ export const extractModel = (environment, config = {}, options = {}) => {
 					type: typeOfParameter(parameter),
 				})),
 				returns: returnTypeOf(method, node),
+				// `override method`: lo dice el codigo, no se deduce
+				override: method.isOverride === true,
 			}))
 
 		const noteText = arg(node, 'UmlNote', 'text')

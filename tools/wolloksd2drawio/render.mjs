@@ -117,16 +117,28 @@ const attributeRow = (attribute, options) => {
 	])
 }
 
-// Con parametros, un espacio adentro de cada parentesis: `volar( kms : Number )`.
-// Sin parametros, pegados: `volar()`.
-const operationRow = (operation) => {
+/*
+ * Un metodo que redefine al de arriba lleva ⬆️ adelante:
+ *
+ *   ⬆️ + llamar( unaDuracion : Number )
+ *
+ * Sale de `override method` en el codigo, no se deduce. En la caja de una interfaz
+ * no se pone: sus operaciones son las del primer implementador (ver families.mjs),
+ * y que ESE metodo redefina a otro no dice nada de la interfaz.
+ *
+ * Con parametros, un espacio adentro de cada parentesis: `volar( kms : Number )`.
+ * Sin parametros, pegados: `volar()`.
+ */
+const OVERRIDE_MARK = '⬆️'
+
+const operationRow = (operation, showOverride) => {
 	const parameters = operation.parameters.flatMap((parameter, index) => [
 		...(index ? [', '] : []),
 		parameter.name,
 		...(parameter.type ? [' : ', typed(parameter.type)] : []),
 	])
 	return rowOf([
-		`+ ${operation.name}(`,
+		`${showOverride && operation.override ? `${OVERRIDE_MARK} ` : ''}+ ${operation.name}(`,
 		...(parameters.length ? [' ', ...parameters, ' '] : []),
 		')',
 		...(operation.returns ? [' : ', typed(operation.returns)] : []),
@@ -145,7 +157,7 @@ const boxOf = (entity, options) => {
 		})),
 		...(attributes.length && operations.length ? [{ id: 'separator', kind: 'separator', text: '' }] : []),
 		...operations.map((operation, index) => ({
-			id: `op:${operation.name}:${index}`, kind: 'row', ...operationRow(operation),
+			id: `op:${operation.name}:${index}`, kind: 'row', ...operationRow(operation, entity.kind !== 'interface'),
 		})),
 	]
 

@@ -25,6 +25,9 @@
  * absolutas, porque viven afuera.
  */
 
+import { textWidthOf } from '../wollok-uml/text-width.mjs'
+import { PARALLEL_GAP } from './routing.mjs'
+
 const CHARACTER_WIDTH = 8.2   // calibrado para la letra de 14px del render
 const MIN_WIDTH = 104
 const MAX_WIDTH = 240
@@ -61,6 +64,15 @@ const LABEL_MIN_WIDTH = 60
 const LABEL_GAP = 60          // separación entre la etiqueta global y el ambiente
 const LABEL_SEPARATION = 14   // entre dos etiquetas del mismo borde
 const PADLOCK_WIDTH = 16      // el candado de las const es más ancho que una letra
+
+// El rotulo de una flecha entre objetos: draw.io lo escribe a 14px, centrado en la
+// mitad del recorrido y con fondo blanco. text-width.mjs mide a 12px, asi que se
+// escala; el candado se suma aparte porque es un emoji y la tabla no lo conoce.
+const ARROW_FONT_SCALE = 14 / 12
+const ARROW_PADLOCK_WIDTH = 17
+const ARROW_LABEL_BACKGROUND = 4   // el fondo blanco asoma 2px por lado
+const ARROW_LABEL_HEIGHT = 17      // un renglon de 14px
+const ARROW_LABEL_AIR = 9          // la flecha que se tiene que ver entre el rotulo y cada objeto
 
 /**
  * Los booleanos y las colecciones van como círculos: su etiqueta es corta y
@@ -124,6 +136,108 @@ const spacingSizeOf = (object) => {
 }
 
 const extentOf = (size) => Math.max(size.width, size.height)
+
+// ---------- los rotulos de las flechas ----------
+
+/*
+ * Una flecha tiene que ser MAS LARGA que su rotulo.
+ *
+ * draw.io escribe el nombre de la referencia en la mitad de la flecha, con fondo
+ * blanco. Si la flecha es corta, el rotulo se come las puntas y se lee mal:
+ *
+ *   (camion)-(0)              (camion)---cantidadDeAcoplados--->(0)
+ *   "camcantidadDeAcoplados"
+ *
+ * Cuanto hace falta depende de la DIRECCION: un rotulo es ancho y bajo, asi que
+ * acostado necesita mucho mas largo que parado. Por eso no se suma un numero fijo
+ * sino que se mide, para la direccion que tiene la flecha, a que distancia del
+ * centro de cada punta el rotulo deja de tocarla.
+ */
+
+/** El tamanio del rotulo tal como se dibuja, o undefined si la flecha no lleva nombre. */
+const arrowLabelSizeOf = (reference, padlock) => {
+	const text = String(reference.label ?? '')
+	if (!text) return undefined
+	const padlocked = padlock && reference.constant
+	return {
+		width: textWidthOf(text) * ARROW_FONT_SCALE + (padlocked ? ARROW_PADLOCK_WIDTH : 0) + ARROW_LABEL_BACKGROUND,
+		height: ARROW_LABEL_HEIGHT,
+	}
+}
+
+const pairKey = (a, b) => (a < b ? `${a}--${b}` : `${b}--${a}`)
+
+/**
+ * Las flechas con nombre, una por PAR de objetos. Si dos referencias unen el mismo
+ * par (en cualquier sentido) van una arriba de la otra, y manda la del rotulo mas
+ * ancho: es la que mas largo pide.
+ */
+const labeledArrowsOf = (model, padlock) => {
+	const known = new Set(model.objects.map((object) => object.id))
+	const fans = new Map()
+	for (const reference of model.references) {
+		if (reference.from === reference.to || !known.has(reference.from) || !known.has(reference.to)) continue
+		const key = `${reference.from}->${reference.to}`
+		fans.set(key, [...(fans.get(key) ?? []), reference])
+	}
+	const byPair = new Map()
+	for (const fan of fans.values()) {
+		const { from, to } = fan[0]
+		const key = pairKey(from, to)
+		const entry = byPair.get(key) ?? { from, to, label: undefined, labels: [] }
+		fan.forEach((reference, index) => {
+			const size = arrowLabelSizeOf(reference, padlock)
+			if (!size) return
+			entry.labels.push({ from, to, size, shift: (index - (fan.length - 1) / 2) * PARALLEL_GAP })
+			if (!entry.label || entry.label.width < size.width) entry.label = size
+		})
+		if (entry.label) byPair.set(key, entry)
+	}
+	return byPair
+}
+
+/**
+ * Si el rotulo, centrado en `at`, toca la elipse de un objeto agrandada por el aire.
+ * Se lleva la elipse al circulo unitario dividiendo por los semiejes: el rotulo
+ * sigue siendo un rectangulo, y alcanza con ver si su punto mas cercano al centro
+ * cae adentro.
+ */
+const labelTouches = (label, at, center, size) => {
+	const rx = size.width / 2 + ARROW_LABEL_AIR
+	const ry = size.height / 2 + ARROW_LABEL_AIR
+	const clamp = (value, low, high) => Math.max(low, Math.min(high, value))
+	const nearestX = clamp(0, (at.x - label.width / 2 - center.x) / rx, (at.x + label.width / 2 - center.x) / rx)
+	const nearestY = clamp(0, (at.y - label.height / 2 - center.y) / ry, (at.y + label.height / 2 - center.y) / ry)
+	return nearestX * nearestX + nearestY * nearestY < 1
+}
+
+/**
+ * A que distancia del centro de un objeto, yendo en la direccion (dx, dy), el
+ * rotulo deja de tocarlo. Las posiciones donde lo toca forman una figura convexa
+ * alrededor del centro, asi que el camino sale de ella una sola vez y se puede
+ * buscar partiendo al medio.
+ */
+const reachOf = (size, label, dx, dy) => {
+	const center = { x: 0, y: 0 }
+	let [inside, outside] = [0, size.width + size.height + label.width + label.height + 2 * ARROW_LABEL_AIR]
+	for (let step = 0; step < 18; step++) {
+		const middle = (inside + outside) / 2
+		if (labelTouches(label, { x: dx * middle, y: dy * middle }, center, size)) inside = middle
+		else outside = middle
+	}
+	return outside
+}
+
+/**
+ * Lo que tiene que medir, de centro a centro, una flecha con esa direccion para que
+ * su rotulo entre sin tocar ninguna punta. Se mide con los centros y no con los
+ * bordes, que es donde draw.io la corta de verdad: el rotulo es el mismo en las dos
+ * puntas, y con eso la cuenta por centros es la mas exigente de las dos.
+ */
+const arrowLengthFor = (arrow, spacing, dx, dy) => 2 * Math.max(
+	reachOf(spacing.get(arrow.from), arrow.label, dx, dy),
+	reachOf(spacing.get(arrow.to), arrow.label, dx, dy),
+)
 
 // ---------- el bosque de referencias ----------
 
@@ -217,8 +331,14 @@ const radiusFor = (node, kids, arc, spacing) => {
 	return Math.min(MAX_RADIUS, Math.max(byParent, byChord, MIN_RADIUS))
 }
 
-/** Ubica un árbol en coordenadas locales, con la raíz en el origen. */
-const placeTree = (root, children, spacing) => {
+/**
+ * Ubica un árbol en coordenadas locales, con la raíz en el origen.
+ *
+ * El radio del abanico es uno para todos los hermanos, pero el hijo cuya flecha
+ * lleva un rotulo que no entra se aleja lo que haga falta, en su misma direccion:
+ * asi un `cantidadDeAcoplados` no arrastra a sus hermanos de nombre corto.
+ */
+const placeTree = (root, children, spacing, arrows) => {
 	const points = new Map([[root, { x: 0, y: 0 }]])
 
 	const walk = (node, outward, sector) => {
@@ -240,9 +360,12 @@ const placeTree = (root, children, spacing) => {
 
 		kids.forEach((kid, index) => {
 			const angle = angles[index]
+			const arrow = arrows.get(pairKey(node, kid))
+			const [dx, dy] = [Math.cos(angle), Math.sin(angle)]
+			const distance = arrow ? Math.max(radius, arrowLengthFor(arrow, spacing, dx, dy)) : radius
 			points.set(kid, {
-				x: center.x + radius * Math.cos(angle),
-				y: center.y + radius * Math.sin(angle),
+				x: center.x + distance * dx,
+				y: center.y + distance * dy,
 			})
 			walk(kid, angle, share)
 		})
@@ -266,6 +389,7 @@ const boundingBox = (points, spacing) => {
 /** Cuánto pesa cada defecto al elegir dónde poner un compartido. */
 const THROUGH_PENALTY = 3     // una flecha que parte un objeto al medio
 const CROSSING_PENALTY = 1    // dos flechas que se cruzan
+const LABEL_PENALTY = 2       // un rotulo que tapa un objeto, el suyo o uno ajeno
 
 /** Las posiciones que se prueban, como fracción del camino hacia el promedio. */
 const SHARED_CANDIDATES = [0, 0.25, 0.5, 0.75, 1]
@@ -317,9 +441,25 @@ const linksOf = (model, centers) => model.references
  * medio y flechas que se cruzan. Es la vara con la que se aceptan o se descartan
  * los movimientos de abajo — ninguno se aplica por parecer buena idea.
  */
-const scoreOf = (centers, links, spacing) => {
+const scoreOf = (centers, links, spacing, arrows) => {
 	const segments = links.map(([from, to]) => [centers.get(from), centers.get(to)])
 	let total = 0
+	for (const arrow of arrows.values()) {
+		// cada rotulo donde va a quedar de verdad: las flechas que unen el mismo par
+		// salen en abanico, y sus rotulos siguen a la flecha (ver fanOutParallels)
+		for (const label of arrow.labels) {
+			const [from, to] = [centers.get(label.from), centers.get(label.to)]
+			if (!from || !to) continue
+			const length = Math.hypot(to.x - from.x, to.y - from.y) || 1
+			const middle = {
+				x: (from.x + to.x) / 2 - ((to.y - from.y) / length) * label.shift,
+				y: (from.y + to.y) / 2 + ((to.x - from.x) / length) * label.shift,
+			}
+			for (const [id, at] of centers) {
+				if (labelTouches(label.size, middle, at, spacing.get(id))) total += LABEL_PENALTY
+			}
+		}
+	}
 	for (let i = 0; i < segments.length; i++) {
 		for (const [id, at] of centers) {
 			if (links[i][0] === id || links[i][1] === id) continue
@@ -373,7 +513,7 @@ const shiftBranch = (branch, centers, dx, dy) => {
  * el abanico del que cuelga. Y el que quede encimado lo separa pullApart, que
  * corre justo después.
  */
-const pullShared = (centers, model, children, spacing) => {
+const pullShared = (centers, model, children, spacing, arrows) => {
 	const links = linksOf(model, centers)
 	if (!links.length) return
 
@@ -390,7 +530,7 @@ const pullShared = (centers, model, children, spacing) => {
 		.filter((entry) => entry.branch.length <= Math.max(3, centers.size / 4))
 	if (!movable.length) return
 
-	const score = () => scoreOf(centers, links, spacing)
+	const score = () => scoreOf(centers, links, spacing, arrows)
 
 	for (let pass = 0; pass < SHARED_PASSES; pass++) {
 		let improved = false
@@ -439,7 +579,7 @@ const pullShared = (centers, model, children, spacing) => {
  * Cada hermano se lleva su rama entera, y el cambio se acepta sólo si el dibujo
  * mide mejor.
  */
-const swapSiblings = (centers, model, children, spacing) => {
+const swapSiblings = (centers, model, children, spacing, arrows) => {
 	const links = linksOf(model, centers)
 	if (!links.length) return
 
@@ -448,7 +588,7 @@ const swapSiblings = (centers, model, children, spacing) => {
 		.map((siblings) => siblings.filter((id) => centers.has(id)))
 	if (!families.length) return
 
-	let best = scoreOf(centers, links, spacing)
+	let best = scoreOf(centers, links, spacing, arrows)
 	for (let pass = 0; pass < SWAP_PASSES; pass++) {
 		let improved = false
 		for (const siblings of families) {
@@ -461,7 +601,7 @@ const swapSiblings = (centers, model, children, spacing) => {
 					const [dx, dy] = [to.x - from.x, to.y - from.y]
 					shiftBranch(here, centers, dx, dy)
 					shiftBranch(there, centers, -dx, -dy)
-					const value = scoreOf(centers, links, spacing)
+					const value = scoreOf(centers, links, spacing, arrows)
 					if (value < best) {
 						best = value
 						improved = true
@@ -476,8 +616,111 @@ const swapSiblings = (centers, model, children, spacing) => {
 	}
 }
 
-/** Separa lo que haya quedado encimado, empujando por el eje que menos molesta. */
-const pullApart = (centers, spacing, iterations = 120) => {
+const TURN_STEPS = 16         // las direcciones que se prueban al girar una rama
+const TURN_PASSES = 3
+
+/** Si algun objeto de la rama quedo encimado con uno que no es de la rama. */
+const branchOverlaps = (branch, centers, spacing) => {
+	const members = new Set(branch)
+	for (const id of branch) {
+		const [a, sa] = [centers.get(id), spacing.get(id)]
+		for (const [other, b] of centers) {
+			if (members.has(other)) continue
+			const sb = spacing.get(other)
+			if (Math.abs(a.x - b.x) < (sa.width + sb.width) / 2 + GAP / 2
+				&& Math.abs(a.y - b.y) < (sa.height + sb.height) / 2 + GAP / 2) return true
+		}
+	}
+	return false
+}
+
+/**
+ * GIRA una rama alrededor del padre, buscando un lugar mejor.
+ *
+ * Alargar una flecha para que entre su rotulo empuja al hijo hacia afuera, y a
+ * veces lo deja justo donde molesta: encima del rotulo de otra flecha, o cruzando
+ * una. Como el abanico radial ya eligio una direccion para cada hijo, lo que queda
+ * es probar OTRAS direcciones para la rama entera, sin cambiar de padre:
+ *
+ *        (a)                       (a)
+ *          \                          \
+ *          (b)--largoNombre--(c)       (b)
+ *                                        \
+ *                                        (c)   <- mismo padre, otra direccion
+ *
+ * Cada giro se acepta solo si el dibujo mide mejor (scoreOf, que ahora tambien
+ * cuenta los rotulos tapados) y si la rama no queda encimada con nada. El giro no
+ * puede pasar por encima de un hermano: el orden del abanico se respeta.
+ */
+const turnBranches = (centers, model, children, spacing, arrows) => {
+	const links = linksOf(model, centers)
+	if (!links.length) return
+	const score = () => scoreOf(centers, links, spacing, arrows)
+	const limit = Math.max(3, centers.size / 4)
+	const pairs = [...children].flatMap(([parent, kids]) => kids.map((kid) => [parent, kid, kids]))
+		.filter(([parent, kid]) => centers.has(parent) && centers.has(kid))
+	const angleOf = (from, to) => Math.atan2(to.y - from.y, to.x - from.x)
+
+	let best = score()
+	for (let pass = 0; pass < TURN_PASSES; pass++) {
+		let improved = false
+		for (const [parent, kid, kids] of pairs) {
+			const branch = branchOf(kid, centers, children)
+			if (branch.length > limit) continue
+			const pivot = centers.get(parent)
+			const here = angleOf(pivot, centers.get(kid))
+			// hasta donde puede girar sin cruzar a un hermano
+			let [ahead, back] = [Math.PI, Math.PI]
+			const others = kids.filter((other) => other !== kid && centers.has(other))
+				.map((other) => (angleOf(pivot, centers.get(other)) - here + 4 * Math.PI) % (2 * Math.PI))
+			if (others.length) {
+				ahead = Math.min(...others)
+				back = 2 * Math.PI - Math.max(...others)
+			}
+			const saved = branch.map((id) => ({ ...centers.get(id) }))
+			const restore = () => branch.forEach((id, i) => Object.assign(centers.get(id), saved[i]))
+			const arrow = arrows.get(pairKey(parent, kid))
+			let choice
+			const current = best
+			for (let step = 1; step < TURN_STEPS; step++) {
+				const full = (2 * Math.PI * step) / TURN_STEPS
+				const turn = full > Math.PI ? full - 2 * Math.PI : full
+				if (turn >= ahead || -turn >= back) continue
+				const [cos, sin] = [Math.cos(turn), Math.sin(turn)]
+				branch.forEach((id, i) => {
+					const [dx, dy] = [saved[i].x - pivot.x, saved[i].y - pivot.y]
+					Object.assign(centers.get(id), { x: pivot.x + dx * cos - dy * sin, y: pivot.y + dx * sin + dy * cos })
+				})
+				if (arrow) {
+					const head = centers.get(kid)
+					const distance = Math.hypot(head.x - pivot.x, head.y - pivot.y)
+					const [ux, uy] = [(head.x - pivot.x) / distance, (head.y - pivot.y) / distance]
+					const missing = arrowLengthFor(arrow, spacing, ux, uy) - distance
+					if (missing > 0) shiftBranch(branch, centers, ux * missing, uy * missing)
+				}
+				const value = branchOverlaps(branch, centers, spacing) ? Infinity : score()
+				// ante empate gana el primero: el lugar que eligio el abanico radial
+				if (value < current && value < best) {
+					best = value
+					choice = branch.map((id) => ({ ...centers.get(id) }))
+				}
+				restore()
+			}
+			if (!choice) continue
+			branch.forEach((id, i) => Object.assign(centers.get(id), choice[i]))
+			improved = true
+		}
+		if (!improved) return
+	}
+}
+
+/**
+ * Separa lo que haya quedado encimado, empujando por el eje que menos molesta, y
+ * ESTIRA las flechas cuyo rotulo no entra, apartando las dos puntas en la direccion
+ * de la flecha. Las dos cosas van juntas en la misma vuelta porque se pelean entre
+ * si: estirar una flecha puede encimar dos objetos, y separarlos puede acortar otra.
+ */
+const pullApart = (centers, spacing, arrows, iterations = 120) => {
 	const ids = [...centers.keys()]
 	for (let round = 0; round < iterations; round++) {
 		let moved = false
@@ -500,6 +743,19 @@ const pullApart = (centers, spacing, iterations = 120) => {
 				}
 			}
 		}
+		for (const arrow of arrows.values()) {
+			const [a, b] = [centers.get(arrow.from), centers.get(arrow.to)]
+			const distance = Math.hypot(b.x - a.x, b.y - a.y)
+			const [dx, dy] = distance > 1e-6 ? [(b.x - a.x) / distance, (b.y - a.y) / distance] : [1, 0]
+			const missing = arrowLengthFor(arrow, spacing, dx, dy) - distance
+			if (missing <= 0) continue
+			moved = true
+			const push = missing / 2 + 1
+			a.x -= dx * push
+			a.y -= dy * push
+			b.x += dx * push
+			b.y += dy * push
+		}
 		if (!moved) return
 	}
 }
@@ -512,10 +768,11 @@ export const layout = (model, previous = new Map(), padlock = true) => {
 
 	const { children, roots } = forestOf(model)
 	groupByFamily(children, model)
+	const arrows = labeledArrowsOf(model, padlock)
 
 	// --- cada árbol por su cuenta, y después se acomodan entre ellos ---
 	const trees = roots.map((root) => {
-		const points = placeTree(root, children, spacing)
+		const points = placeTree(root, children, spacing, arrows)
 		return { root, points, box: boundingBox(points, spacing) }
 	})
 	const withChildren = trees.filter((tree) => tree.points.size > 1)
@@ -559,10 +816,11 @@ export const layout = (model, previous = new Map(), padlock = true) => {
 	// que dejarlo en su forma definitiva (pullApart separa lo encimado), despues
 	// buscar mejores lugares para los compartidos, y volver a separar por si
 	// alguno quedo pegado a un vecino.
-	pullApart(centers, spacing)
-	pullShared(centers, model, children, spacing)
-	swapSiblings(centers, model, children, spacing)
-	pullApart(centers, spacing)
+	pullApart(centers, spacing, arrows)
+	pullShared(centers, model, children, spacing, arrows)
+	swapSiblings(centers, model, children, spacing, arrows)
+	turnBranches(centers, model, children, spacing, arrows)
+	pullApart(centers, spacing, arrows)
 
 	// --- de centros a esquinas, ya con las posiciones guardadas a mano ---
 	const left = Math.min(...[...centers.entries()].map(([id, at]) => at.x - spacing.get(id).width / 2))

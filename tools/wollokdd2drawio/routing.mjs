@@ -28,7 +28,8 @@
  * problema está en el layout y no en el dibujo de la flecha.
  */
 
-const PARALLEL_GAP = 30     // entre dos flechas que unen el mismo par
+// Lo usa tambien el layout: el rotulo de una flecha en abanico se corre con ella.
+export const PARALLEL_GAP = 30     // entre dos flechas que unen el mismo par
 const DODGE_STEP = 26       // de cuánto en cuánto se prueba el desvío
 const DODGE_TRIES = 10      // hasta 10 pasos a cada lado
 const CLEARANCE = 3         // aire que se le exige al borde de la elipse
