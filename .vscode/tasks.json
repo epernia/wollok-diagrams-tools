@@ -435,7 +435,7 @@
                 "${file}",
                 "-o",
                 "${fileDirname}/${fileBasenameNoExtension}_static.puml",
-                "--pastelcolors"   // La paleta, igual que en "Generate Dynamic
+                "--pastelcolors",  // La paleta, igual que en "Generate Dynamic
                                    // Diagrams", así los dos diagramas salen del
                                    // mismo color. Si la cambiás allá, cambiala
                                    // también acá y en la otra salida del
@@ -447,6 +447,7 @@
                                    //     con tonos aptos para daltónicos.
                                    //   - "--pastelcolors": familias polimórficas
                                    //     con colores pasteles.
+                "--esgenderlang"
             ],
             "options": {
                 "cwd": "${workspaceFolder}",
@@ -472,7 +473,7 @@
                 "${file}",
                 "-o",
                 "${fileDirname}/${fileBasenameNoExtension}_static.drawio",
-                "--pastelcolors"   // La paleta, igual que en "Generate Dynamic
+                "--pastelcolors",  // La paleta, igual que en "Generate Dynamic
                                    // Diagrams", así los dos diagramas salen del
                                    // mismo color. Si la cambiás allá, cambiala
                                    // también acá y en la otra salida del
@@ -484,6 +485,7 @@
                                    //     con tonos aptos para daltónicos.
                                    //   - "--pastelcolors": familias polimórficas
                                    //     con colores pasteles.
+                "--esgenderlang"
             ],
             "options": {
                 "cwd": "${workspaceFolder}",

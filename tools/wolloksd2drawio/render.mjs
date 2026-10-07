@@ -20,6 +20,8 @@ import { readGeometry } from '../wollok-uml/drawio-merge.mjs'
 import { entityColorsOf } from '../wollok-uml/entity-colors.mjs'
 import { typeColorOf, valueColorOf, mutabilityColorOf } from '../wollok-uml/palette.mjs'
 import { messagesFor } from '../wollok-uml/i18n.mjs'
+import { relationLabelOf } from '../wollok-uml/relation-labels.mjs'
+import { textWidthOf } from '../wollok-uml/text-width.mjs'
 
 export { readGeometry }
 
@@ -128,6 +130,8 @@ const attributeRow = (attribute, options) => {
  *
  * Con parametros, un espacio adentro de cada parentesis: `volar( kms : Number )`.
  * Sin parametros, pegados: `volar()`.
+ *
+ * Un metodo @UmlPrivate lleva `-` en lugar de `+`, como un atributo sin property.
  */
 const OVERRIDE_MARK = '⬆️'
 
@@ -138,7 +142,7 @@ const operationRow = (operation, showOverride) => {
 		...(parameter.type ? [' : ', typed(parameter.type)] : []),
 	])
 	return rowOf([
-		`${showOverride && operation.override ? `${OVERRIDE_MARK} ` : ''}+ ${operation.name}(`,
+		`${showOverride && operation.override ? `${OVERRIDE_MARK} ` : ''}${operation.visibility ?? '+'} ${operation.name}(`,
 		...(parameters.length ? [' ', ...parameters, ' '] : []),
 		')',
 		...(operation.returns ? [' : ', typed(operation.returns)] : []),
@@ -221,11 +225,15 @@ const endpointsOf = (relation) => STRUCTURAL.includes(relation.kind)
  */
 const LABEL_LIFT = 11          // el nombre de la referencia, arriba del tramo
 const MULTIPLICITY_LIFT = 9    // las multiplicidades, un poco mas pegadas
+const ARROWHEAD = 14           // lo que ocupa el triangulo hueco en la punta (endSize)
 
-const edgeLabel = (id, parentId, text, position, lift) => [
-	`        <mxCell id="${escapeXml(id)}" value="${escapeXml(text)}" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="${escapeXml(parentId)}">`,
+// El rotulo es HTML (html=1) adentro de un atributo XML, asi que se escapa dos
+// veces: sin eso, draw.io toma `<conoce>` por una etiqueta desconocida y no
+// muestra nada.
+const edgeLabel = (id, parentId, text, position, lift, dx = 0) => [
+	`        <mxCell id="${escapeXml(id)}" value="${escapeXml(escapeHtml(text))}" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" vertex="1" connectable="0" parent="${escapeXml(parentId)}">`,
 	`          <mxGeometry x="${position}" relative="1" as="geometry">`,
-	`            <mxPoint y="${-lift}" as="offset" />`,
+	`            <mxPoint${dx ? ` x="${round(dx)}"` : ''} y="${round(-lift)}" as="offset" />`,
 	'          </mxGeometry>',
 	'        </mxCell>',
 ]
@@ -292,7 +300,237 @@ const labelPositionOf = (route) => {
 	return round(Math.max(-0.9, Math.min(0.9, (best / total) * 2 - 1)))
 }
 
-const edgeCells = (route, boxesByName) => {
+// ---------- el rotulo de cada relacion: <hereda>, <implementa>, <conoce>, <usa> ----------
+
+/*
+ * draw.io escribe los rotulos de arista con letra de 11px y fondo blanco, y los
+ * ubica en una posicion relativa (-1 en el origen, 1 en el destino) medida sobre el
+ * LARGO del recorrido, a la que le suma un corrimiento. Con eso se puede saber de
+ * antemano donde va a quedar cada rotulo, y buscarle un lugar donde no pise nada.
+ */
+const EDGE_LABEL_SCALE = 11 / 12   // text-width.mjs mide a 12px
+const EDGE_LABEL_HEIGHT = 13
+const LABEL_AIR = 2                // lo minimo que tiene que quedar alrededor de un rotulo
+const SIDE_GAP = 6                 // entre un rotulo al costado de un tramo vertical y el tramo
+const ALONG = [0.5, 0.35, 0.65, 0.2, 0.8]   // donde se prueba sobre cada tramo, el medio primero
+
+/** Los tramos del recorrido, cada uno con donde empieza medido desde el origen. */
+const legsOf = (route) => {
+	const path = [route.exit, ...route.points, route.entry]
+	let run = 0
+	return path.slice(0, -1).map((a, i) => {
+		const b = path[i + 1]
+		const length = Math.abs(b.x - a.x) + Math.abs(b.y - a.y)
+		const leg = { a, b, start: run, length, horizontal: Math.abs(b.y - a.y) < 0.5 }
+		run += length
+		return leg
+	})
+}
+
+/** El punto a `run` px del origen, sobre el recorrido. */
+const pointAtRun = (legs, run) => {
+	for (const [index, leg] of legs.entries()) {
+		if (run <= leg.start + leg.length || index === legs.length - 1) {
+			const t = leg.length ? Math.max(0, Math.min(1, (run - leg.start) / leg.length)) : 0
+			return { x: leg.a.x + (leg.b.x - leg.a.x) * t, y: leg.a.y + (leg.b.y - leg.a.y) * t }
+		}
+	}
+	return legs[0].a
+}
+
+const halfWidthOf = (text) => (textWidthOf(text) * EDGE_LABEL_SCALE + 2) / 2
+
+/** El lugar que ocupa un rotulo centrado en `center`, con su aire alrededor. */
+const labelRectOf = (text, center) => {
+	const [halfWidth, halfHeight] = [halfWidthOf(text) + LABEL_AIR, EDGE_LABEL_HEIGHT / 2 + LABEL_AIR]
+	return { left: center.x - halfWidth, right: center.x + halfWidth, top: center.y - halfHeight, bottom: center.y + halfHeight }
+}
+
+const overlaps = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
+
+const legRectOf = (leg) => ({
+	left: Math.min(leg.a.x, leg.b.x), right: Math.max(leg.a.x, leg.b.x),
+	top: Math.min(leg.a.y, leg.b.y), bottom: Math.max(leg.a.y, leg.b.y),
+})
+
+/** La punta de una flecha: los ultimos `size` px del tramo, con su ancho. */
+const tipRectOf = (from, to, size) => {
+	const length = Math.abs(to.x - from.x) + Math.abs(to.y - from.y) || 1
+	const [ux, uy] = [(to.x - from.x) / length, (to.y - from.y) / length]
+	const base = { x: to.x - ux * size, y: to.y - uy * size }
+	const half = size / 2
+	return {
+		left: Math.min(base.x, to.x) - (uy ? half : 0), right: Math.max(base.x, to.x) + (uy ? half : 0),
+		top: Math.min(base.y, to.y) - (ux ? half : 0), bottom: Math.max(base.y, to.y) + (ux ? half : 0),
+	}
+}
+
+/** Lo que mide el ultimo tramo de una ruta, el que entra a la caja de destino. */
+const lastLegOf = (route) => {
+	const legs = legsOf(route)
+	return legs[legs.length - 1]?.length ?? 0
+}
+
+/** El peine al que pertenece una flecha de herencia o realizacion. */
+const combOf = (route) => (route.structural ? `${route.relation.kind}::${route.relation.from}` : undefined)
+
+/*
+ * Lo que pesa pisar cada cosa. Tapar texto es lo peor despues de meterse en una
+ * caja: el rotulo tiene fondo blanco, asi que cruzar una linea la corta pero se
+ * sigue leyendo; tapar un nombre, no.
+ */
+const WEIGHT = { box: 4, text: 3, tip: 2, line: 1 }
+
+/**
+ * Todo lo que un rotulo no deberia pisar: las cajas y notas, los rotulos que ya
+ * tiene cada flecha (el nombre de la referencia y las multiplicidades), las puntas
+ * y los tramos de todas las flechas. Cada cosa con su peso y con su duenio, para
+ * poder no contar lo propio.
+ */
+const obstaclesOf = (routes, rects) => {
+	const obstacles = rects.map((rect) => ({ rect: { left: rect.x, right: rect.right, top: rect.y, bottom: rect.bottom }, weight: WEIGHT.box }))
+	for (const route of routes) {
+		const legs = legsOf(route)
+		if (!legs.length) continue
+		const total = legs[legs.length - 1].start + legs[legs.length - 1].length
+		const owner = combOf(route) ?? route
+		const labelAt = (text, position, dy) => {
+			const point = pointAtRun(legs, ((position + 1) / 2) * total)
+			obstacles.push({ rect: labelRectOf(text, { x: point.x, y: point.y + dy }), weight: WEIGHT.text, owner })
+		}
+		const { relation } = route
+		if (relation.label && !route.structural) labelAt(relation.label, labelPositionOf(route), -LABEL_LIFT)
+		if (relation.fromMultiplicity) labelAt(relation.fromMultiplicity, -0.9, -MULTIPLICITY_LIFT)
+		if (relation.toMultiplicity) labelAt(relation.toMultiplicity, 0.9, -MULTIPLICITY_LIFT)
+		const last = legs[legs.length - 1]
+		obstacles.push({ rect: tipRectOf(last.a, last.b, route.structural ? ARROWHEAD : 12), weight: WEIGHT.tip, owner })
+		for (const leg of legs) obstacles.push({ rect: legRectOf(leg), weight: WEIGHT.line, owner })
+	}
+	return obstacles
+}
+
+/**
+ * Los lugares donde se prueba un rotulo, en orden de preferencia: { position, dx, dy }
+ * (la posicion relativa sobre el recorrido y el corrimiento que se le suma).
+ *
+ *   - En un peine, al costado del tramo que llega al padre, entre el tronco y la
+ *     punta del triangulo (o apoyado justo arriba del tronco, si ese hueco es mas
+ *     bajo que el rotulo): primero a la izquierda y si no a la derecha, a mas de
+ *     media punta del tramo, para no tocar el triangulo. Si de ningun lado hay
+ *     lugar, se prueban otras alturas del tramo, y como ultimo recurso centrado
+ *     sobre la linea (con fondo blanco, la corta).
+ *
+ *               △  <- la punta, ARROWHEAD px
+ *     <hereda>  │
+ *     ┌─────────┴────────┐  <- el tronco
+ *   (hijo)             (hijo)
+ *
+ *   - En las demas, arriba o abajo de un tramo horizontal: primero el lado opuesto
+ *     al nombre de la referencia, que va arriba. Los tramos mas largos primero y el
+ *     medio de cada tramo primero. Si ninguno sirve, al costado de un tramo
+ *     vertical, y si tampoco, un renglon mas lejos de la linea.
+ *
+ * El primero es siempre el lugar natural: la busqueda solo lo mueve si ahi choca.
+ */
+const candidatesOf = (route, text) => {
+	const legs = legsOf(route)
+	const total = legs[legs.length - 1].start + legs[legs.length - 1].length
+	const position = (run) => round(Math.max(-0.95, Math.min(0.95, total ? (run / total) * 2 - 1 : 0)))
+	const half = halfWidthOf(text)
+	if (route.structural) {
+		const last = legs[legs.length - 1]
+		// lo que se aparta del tramo: media punta mas el aire, asi no roza el triangulo
+		const clearance = ARROWHEAD / 2 + LABEL_AIR + 1
+		const aside = (side) => (last.horizontal
+			? { dx: 0, dy: side * (EDGE_LABEL_HEIGHT / 2 + clearance) }
+			: { dx: side * (half + clearance), dy: 0 })
+		// el medio del hueco entre el tronco y la punta; si el hueco es chico, apoyado
+		// justo arriba del tronco; y si no, otras alturas del tramo
+		const runs = [total - ARROWHEAD - Math.max(0, last.length - ARROWHEAD) / 2,
+			last.start + EDGE_LABEL_HEIGHT / 2 + LABEL_AIR + 1,
+			...ALONG.map((fraction) => last.start + last.length * fraction)]
+		return [
+			...runs.flatMap((run) => [-1, 1].map((side) => ({ position: position(run), ...aside(side) }))),
+			{ position: position(runs[0]), dx: 0, dy: 0 },
+		]
+	}
+	const byLength = (a, b) => b.length - a.length
+	const horizontals = legs.filter((leg) => leg.horizontal).sort(byLength)
+	const verticals = legs.filter((leg) => !leg.horizontal).sort(byLength)
+	const along = (leg, place) => ALONG.flatMap((fraction) => place(position(leg.start + leg.length * fraction)))
+	// pegado a la linea; y si ahi no hay lugar, un renglon mas lejos (en un tramo
+	// corto entre dos cajas vecinas, arriba esta el nombre y abajo otra flecha)
+	const ring = (distance) => {
+		const sides = route.relation.label ? [distance, -distance] : [-distance, distance]
+		return horizontals.flatMap((leg) => along(leg, (at) => sides.map((dy) => ({ position: at, dx: 0, dy }))))
+	}
+	return [
+		...ring(LABEL_LIFT),
+		...verticals.flatMap((leg) => along(leg, (at) => [1, -1].map((side) => ({ position: at, dx: side * (half + SIDE_GAP), dy: 0 })))),
+		// el segundo renglon: lo justo para no rozar el primero, contando el aire de los dos
+		...ring(LABEL_LIFT + EDGE_LABEL_HEIGHT + 2 * LABEL_AIR + 1),
+	]
+}
+
+/**
+ * Que flecha lleva cada rotulo, y donde.
+ *
+ * Las de herencia y realizacion de un mismo padre forman un PEINE: comparten el
+ * tramo que llega al padre, asi que el rotulo va una sola vez, en la flecha cuyo
+ * ultimo tramo es el mas corto (esa parte la comparten todas, aunque alguna caja se
+ * haya movido a mano). Las demas flechas llevan cada una el suyo.
+ *
+ * Primero se ubican los de los peines y despues el resto, y cada uno que se ubica
+ * pasa a ser un obstaculo para los que siguen. De cada lista de candidatos gana el
+ * primero que no pisa nada; si todos pisan algo, el que menos pisa.
+ *
+ * Con una excepcion: dos flechas de la misma clase entre las mismas dos cajas
+ * (juliana conoce a satelital como su celular y como su empresa) van paralelas y
+ * pegadas. Si la segunda no encuentra lugar libre, no lleva rotulo: el <conoce> de
+ * la primera ya lo dice para las dos, y uno encima del otro no se leeria ninguno.
+ *
+ * @returns Map(route -> { text, position, dx, dy })
+ */
+const placeRelationLabels = (routes, rects, language) => {
+	const combs = new Map()
+	const loose = []
+	for (const route of routes) {
+		if (!relationLabelOf(route.relation.kind, language) || !legsOf(route).length) continue
+		if (!route.structural) { loose.push(route); continue }
+		const chosen = combs.get(combOf(route))
+		if (!chosen || lastLegOf(route) < lastLegOf(chosen)) combs.set(combOf(route), route)
+	}
+
+	const obstacles = obstaclesOf(routes, rects)
+	const placements = new Map()
+	const bundles = new Set()   // clase + origen + destino de las que ya tienen rotulo
+	for (const route of [...combs.values(), ...loose]) {
+		const text = relationLabelOf(route.relation.kind, language)
+		const legs = legsOf(route)
+		const total = legs[legs.length - 1].start + legs[legs.length - 1].length
+		const own = combOf(route) ?? route
+		let best
+		for (const candidate of candidatesOf(route, text)) {
+			const point = pointAtRun(legs, ((candidate.position + 1) / 2) * total)
+			const rect = labelRectOf(text, { x: point.x + candidate.dx, y: point.y + candidate.dy })
+			const cost = obstacles.reduce((sum, obstacle) => sum + (overlaps(rect, obstacle.rect) ? obstacle.weight : 0), 0)
+			if (!best || cost < best.cost) best = { ...candidate, rect, cost }
+			if (!cost) break
+		}
+		const bundle = `${route.relation.kind}::${route.relation.from}::${route.relation.to}`
+		if (best.cost && bundles.has(bundle)) continue
+		bundles.add(bundle)
+		placements.set(route, { text, position: best.position, dx: best.dx, dy: best.dy })
+		obstacles.push({ rect: best.rect, weight: WEIGHT.text, owner: own })
+	}
+	return placements
+}
+
+/**
+ * @param relationLabel  { text, position, dx, dy } de placeRelationLabels, o
+ *                       undefined si esta flecha no lleva rotulo
+ */
+const edgeCells = (route, boxesByName, relationLabel) => {
 	const { relation, index } = route
 	const { source, target } = endpointsOf(relation)
 	const id = `edge::${relation.kind}::${source}::${target}::${index}`
@@ -330,6 +568,11 @@ const edgeCells = (route, boxesByName) => {
 	// las multiplicidades van pegadas a cada punta
 	if (relation.fromMultiplicity) cells.push(...edgeLabel(`${id}::from`, id, relation.fromMultiplicity, -0.9, MULTIPLICITY_LIFT))
 	if (relation.toMultiplicity) cells.push(...edgeLabel(`${id}::to`, id, relation.toMultiplicity, 0.9, MULTIPLICITY_LIFT))
+	// <hereda>, <implementa>, <conoce>, <usa>, donde placeRelationLabels encontro lugar
+	if (relationLabel) {
+		const { text, position, dx, dy } = relationLabel
+		cells.push(...edgeLabel(`${id}::kind`, id, text, position, -dy, dx))
+	}
 	return cells
 }
 
@@ -477,7 +720,8 @@ export const renderDrawio = (model, options = {}) => {
 
 	const cells = []
 	for (const box of boxes) cells.push(...boxCells(box, positions.get(box.name), colors))
-	for (const route of routes) cells.push(...edgeCells(route, boxesByName))
+	const relationLabels = placeRelationLabels(routes, rects, settings.language)
+	for (const route of routes) cells.push(...edgeCells(route, boxesByName, relationLabels.get(route)))
 	for (const { note, index, size, position } of notes) {
 		cells.push(...noteCells(note, index, position, size))
 	}

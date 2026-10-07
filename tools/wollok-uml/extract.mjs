@@ -6,6 +6,7 @@
  *   {
  *     entities: [{ kind, name, stereotypes, attributes, operations,
  *                  superclass, mixins, interfaces, note }],
+ *                  (operations: [{ name, parameters, returns, visibility, override }])
  *     relations: [{ from, to, kind, fromMultiplicity, toMultiplicity, label }],
  *     notes:     [{ text, target, position }],
  *     warnings:  [string]
@@ -14,17 +15,22 @@
  * kind es 'class' | 'wko' | 'mixin' | 'interface'.
  */
 
-import { annotation, arg, isHidden, unknownUmlAnnotations } from './annotations.mjs'
+import { annotation, arg, isHidden, isPrivate, unknownUmlAnnotations } from './annotations.mjs'
 import { createTypeResolver, isCollectionType, elementTypeOf, withoutArticle } from './infer.mjs'
 import { entityNodesOf, instantiationsOf } from './entities.mjs'
-import { derivedInterfacesOf, familiesOf, wildcardsOf } from './families.mjs'
+import { derivedInterfacesOf, familiesOf, joinersOf, wildcardsOf } from './families.mjs'
 import { messagesFor } from './i18n.mjs'
+
+/** `a`, `a and b`, `a, b and c` */
+const listOf = (items, and) => (items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} ${and} ${items[items.length - 1]}`)
 
 /** Lo que este modulo le dice al usuario. Mismas claves en los dos idiomas. */
 const MESSAGES = {
 	en: {
 		definedInSeveralFiles: (name) => `${name}: is defined in more than one file; it's better to generate one diagram per file`,
 		unknownAnnotation: (name, annotation) => `${name}: unknown annotation @${annotation}`,
+		privateOutsideMethod: (name) => `${name}: @UmlPrivate only applies to methods, I'm ignoring it`,
+		privateSentFromOutside: (place, call, owners) => `${place}: calls ${call}, which is @UmlPrivate in ${listOf(owners, 'and')}. Wollok runs it anyway, but in the diagram it's for internal use only`,
 		untypedAttribute: (owner, attribute) => `${owner}.${attribute}: couldn't infer the type (use @UmlType or the "types" dictionary)`,
 		twoPlaces: (name, slots) => `${name}: occupies two different places (${slots.join(', ')}), so it is left out of the families by place. If it plays both roles, declare them with @UmlImplements`,
 		polymorphicWithoutAbstraction: (owner, attribute, types) => `${owner}.${attribute}: receives ${types.join(', ')}, which are polymorphic with each other but have no interface or superclass joining them, so I couldn't infer the type (declare the interface with @UmlImplements, or use @UmlType)`,
@@ -33,6 +39,8 @@ const MESSAGES = {
 	es: {
 		definedInSeveralFiles: (name) => `${name}: esta definido en mas de un archivo; conviene generar un diagrama por archivo`,
 		unknownAnnotation: (name, annotation) => `${name}: anotacion desconocida @${annotation}`,
+		privateOutsideMethod: (name) => `${name}: @UmlPrivate va solo en un metodo, la ignoro`,
+		privateSentFromOutside: (place, call, owners) => `${place}: llama a ${call}, que en ${listOf(owners, 'y')} es @UmlPrivate. Wollok lo ejecuta igual, pero en el diagrama es de uso interno`,
 		untypedAttribute: (owner, attribute) => `${owner}.${attribute}: no pude inferir el tipo (usa @UmlType o el diccionario "types")`,
 		twoPlaces: (name, slots) => `${name}: ocupa dos lugares distintos (${slots.join(', ')}), asi que queda fuera de las familias por lugar. Si cumple los dos roles, declaralos con @UmlImplements`,
 		polymorphicWithoutAbstraction: (owner, attribute, types) => `${owner}.${attribute}: recibe ${types.join(', ')}, que son polimorficos entre si pero no tienen una interfaz ni una superclase que los una, asi que no pude inferir el tipo (declara la interfaz con @UmlImplements, o usa @UmlType)`,
@@ -226,8 +234,10 @@ export const extractModel = (environment, config = {}, options = {}) => {
 	/** Lo que recibe un atributo, contando lo que reciben las subclases. */
 	const superclassByName = new Map(entityNodes.map((entityNode) => [entityNode.name, superclassNameOf(entityNode)]))
 	const inheritsFrom = (name, ancestor) => {
-		for (let current = name; current; current = superclassByName.get(current)) {
+		// con un corte: `class Personaje inherits base.Personaje` es un ciclo por nombre
+		for (let current = name, seen = new Set(); current && !seen.has(current); current = superclassByName.get(current)) {
 			if (current === ancestor) return true
+			seen.add(current)
 		}
 		return false
 	}
@@ -248,8 +258,13 @@ export const extractModel = (environment, config = {}, options = {}) => {
 	const notes = []
 
 	const entities = entityNodes.map((node) => {
-		for (const unknown of unknownUmlAnnotations(node)) {
-			warnings.push(say.unknownAnnotation(node.name, unknown))
+		// una anotacion mal escrita no hace nada, en silencio: se avisa, este donde este
+		const members = [...(node.fields ?? []), ...(node.methods ?? []).filter((method) => method.sourceMap)]
+		for (const [place, annotated] of [[node.name, node], ...members.map((member) => [`${node.name}.${member.name}`, member])]) {
+			for (const unknown of unknownUmlAnnotations(annotated)) warnings.push(say.unknownAnnotation(place, unknown))
+		}
+		for (const [place, annotated] of [[node.name, node], ...(node.fields ?? []).map((field) => [`${node.name}.${field.name}`, field])]) {
+			if (isPrivate(annotated)) warnings.push(say.privateOutsideMethod(place))
 		}
 
 		const attributes = (node.fields ?? [])
@@ -303,6 +318,8 @@ export const extractModel = (environment, config = {}, options = {}) => {
 					type: typeOfParameter(parameter),
 				})),
 				returns: returnTypeOf(method, node),
+				// Wollok no tiene metodos privados: lo dice @UmlPrivate
+				visibility: isPrivate(method) ? '-' : '+',
 				// `override method`: lo dice el codigo, no se deduce
 				override: method.isOverride === true,
 			}))
@@ -318,7 +335,9 @@ export const extractModel = (environment, config = {}, options = {}) => {
 
 		// Los accesores de una property no se dibujan en la caja (ya se ve el
 		// atributo con visibilidad +), pero SI son parte de los mensajes que el
-		// objeto entiende, y por lo tanto cuentan para derivar una interfaz.
+		// objeto entiende, y por lo tanto cuentan para derivar una interfaz. Un
+		// metodo @UmlPrivate es al reves: se dibuja, pero no es parte de lo que el
+		// objeto ofrece, asi que no va a ninguna interfaz.
 		const propertyMessages = attributes
 			.filter((attribute) => attribute.visibility === '+' && !attribute.inherited)
 			.map((attribute) => ({ name: attribute.name, parameters: [], returns: attribute.type }))
@@ -334,12 +353,181 @@ export const extractModel = (environment, config = {}, options = {}) => {
 			isAbstract: node.isAbstract === true,
 			attributes: [...inheritedArguments, ...attributes],
 			operations,
-			messages: [...operations, ...propertyMessages],
+			messages: [...operations.filter((operation) => operation.visibility === '+'), ...propertyMessages],
 			superclass: superclassNameOf(node),
 			mixins: mixinNamesOf(node),
 			interfaces: arg(node, 'UmlImplements', 'interface') ? [arg(node, 'UmlImplements', 'interface')] : [],
 		}
 	})
+
+	/*
+	 * --- los elementos de cada coleccion ---
+	 *
+	 * Una coleccion tambien es un lugar: `const ciudades = #{ springfield,
+	 * albuquerque }` pone a las dos en el mismo lugar, el de ciudad. Hasta aca solo
+	 * se miraba el PRIMER elemento, y solo para tipar la coleccion
+	 * (`Set<springfield>`). Ahora se anotan todos en el atributo (`elements`), y de
+	 * ahi los toma el criterio 3 de las familias (ver families.mjs).
+	 *
+	 * Los elementos salen de:
+	 *   - el valor inicial: `const ciudades = #{ springfield, albuquerque }`;
+	 *   - un `new` o un `object x inherits Clase(...)`: `new Region(ciudades = #{...})`;
+	 *   - lo que se le agrega: `ciudades.add(x)`, `region.ciudades().add(x)`, y
+	 *     `addAll` de una coleccion escrita en el codigo.
+	 * `add` solo cuenta si el atributo es una coleccion: `carrito.add(manzana)`,
+	 * con un carrito que es un objeto, es un mensaje cualquiera.
+	 *
+	 * Solo cuentan los objetos que se ven en el codigo: un WKO por su nombre,
+	 * `self`, un `new` o una `const` global que se inicializa con un `new`. Un
+	 * parametro que se pasa de mano en mano no dice que objeto es, y una `var`
+	 * puede cambiar.
+	 */
+	const entitiesByName = new Map(entities.map((entity) => [entity.name, entity]))
+
+	/** El atributo `name` de una entidad, o de la superclase o el mixin que lo declara. */
+	const attributeOf = (entityName, name) => {
+		const own = (holder) => entitiesByName.get(holder)?.attributes.find((candidate) => candidate.name === name && !candidate.inherited)
+		for (let current = entityName, seen = new Set(); current && !seen.has(current); current = superclassByName.get(current)) {
+			seen.add(current)
+			const attribute = own(current) ?? (entitiesByName.get(current)?.mixins ?? []).map(own).find(Boolean)
+			if (attribute) return attribute
+		}
+		return undefined
+	}
+
+	/** Lo de adentro de un objeto anonimo: ahi `self` es ese objeto, no el dueno. */
+	const foreignOf = (root) => {
+		const foreign = new Set()
+		for (const node of root ? [root, ...(root.descendants ?? [])] : []) {
+			if (node.kind === 'Singleton' && !node.name && !node.isClosure?.()) {
+				for (const inner of node.descendants ?? []) foreign.add(inner)
+			}
+		}
+		return foreign
+	}
+	const foreignByOwner = new Map()
+	const foreignOfOwner = (owner) => {
+		if (!owner) return new Set()
+		if (!foreignByOwner.has(owner)) foreignByOwner.set(owner, foreignOf(owner))
+		return foreignByOwner.get(owner)
+	}
+
+	/** Un campo que no es de ninguna entidad: el de un describe, por ejemplo. */
+	const isLooseField = (field) => !entityNodes.some((node) => (node.fields ?? []).includes(field))
+
+	/** El objeto concreto que es una expresion, si se ve en el codigo. */
+	const concreteOf = (expression, owner, foreign = new Set()) => {
+		if (expression?.kind === 'Self') {
+			// el self de un mixin es quien lo usa, no el mixin; y uno oculto no se dibuja
+			if (!owner || owner.kind === 'Mixin' || foreign.has(expression) || !nodesByName.has(owner.name)) return undefined
+			return owner.name
+		}
+		if (expression?.kind === 'New') {
+			const name = lastSegment(expression.instantiated?.name)
+			return nodesByName.has(name) ? name : undefined
+		}
+		if (expression?.kind !== 'Reference') return undefined
+		let target
+		try { target = expression.target } catch { /* no resuelve */ }
+		if (target?.kind === 'Singleton' && nodesByName.has(target.name)) return target.name
+		// una const global, o la de un describe (`const springfield = new Ciudad()`)
+		const isConstant = (target?.kind === 'Variable' || (target?.kind === 'Field' && isLooseField(target))) && target.isConstant
+		if (isConstant && target.value?.kind === 'New') return concreteOf(target.value, owner, foreign)
+		return undefined
+	}
+
+	/** Las expresiones de una coleccion escrita en el codigo (`#{a, b}`, `[a, b]`), o undefined. */
+	const elementsOf = (expression) =>
+		expression?.kind === 'Literal' && Array.isArray(expression.value) ? expression.value[1] ?? [] : undefined
+
+	const putElements = (attribute, expressions, owner, foreign) => {
+		if (!attribute) return
+		for (const expression of expressions ?? []) {
+			const name = concreteOf(expression, owner, foreign)
+			if (!name) continue
+			attribute.elements ??= []
+			if (!attribute.elements.includes(name)) attribute.elements.push(name)
+		}
+	}
+
+	/** Los atributos a los que apunta `x` en `x.add(...)`. */
+	const collectionsReceiving = (receiver, owner, foreign) => {
+		if (receiver?.kind === 'Reference') {
+			let target
+			try { target = receiver.target } catch { /* no resuelve */ }
+			if (target?.kind !== 'Field') return []
+			const holder = entityNodes.find((node) => (node.fields ?? []).includes(target))
+			return holder ? [attributeOf(holder.name, target.name)] : []
+		}
+		// el getter: `region.ciudades().add(x)`, `self.ciudades().add(x)`
+		if (receiver?.kind === 'Send' && !(receiver.args ?? []).length) {
+			const holder = concreteOf(receiver.receiver, owner, foreign)
+				// un parametro, por su nombre: `unaMochila.items().add(x)` es de Mochila
+				?? (receiver.receiver?.kind === 'Reference' ? resolver.typeFromName(lastSegment(receiver.receiver.name)) : undefined)
+			// si no se sabe de quien es, no se adivina: podria ser de cualquiera
+			return holder && entitiesByName.has(holder) ? [attributeOf(holder, receiver.message)] : []
+		}
+		return []
+	}
+
+	// `carrito.add(x)` con un atributo sin tipo: si alguna entidad define add, puede
+	// ser ella y no una coleccion
+	const userDefines = (selector) => entityNodes.some((node) =>
+		(node.methods ?? []).some((method) => `${method.name}/${(method.parameters ?? []).length}` === selector))
+
+	const visitedSends = new Set()
+	const putAdds = (root, owner) => {
+		const foreign = foreignOf(root)
+		for (const send of [root, ...(root?.descendants ?? [])]) {
+			if (send?.kind !== 'Send' || visitedSends.has(send)) continue
+			visitedSends.add(send)
+			if (!['add', 'addAll'].includes(send.message) || (send.args ?? []).length !== 1) continue
+			for (const attribute of collectionsReceiving(send.receiver, owner, foreign)) {
+				// `carrito.add(manzana)` con un carrito que es un objeto no es una coleccion
+				if (!attribute || (attribute.type && !isCollectionType(attribute.type))) continue
+				if (!attribute.type && userDefines(`${send.message}/1`)) continue
+				const added = send.message === 'add' ? [send.args[0]] : elementsOf(send.args[0])
+				putElements(attribute, added, owner, foreign)
+			}
+		}
+	}
+
+	for (const node of entityNodes) {
+		for (const field of node.fields ?? []) {
+			putElements(attributeOf(node.name, field.name), elementsOf(field.value), node, foreignOf(field.value))
+		}
+		// object oeste inherits Region(ciudades = #{ ... })
+		for (const supertype of node.supertypes ?? []) {
+			for (const namedArgument of supertype.args ?? []) {
+				putElements(attributeOf(lastSegment(supertype.reference?.name), namedArgument.name), elementsOf(namedArgument.value), node)
+			}
+		}
+		for (const method of node.methods ?? []) {
+			if (method.sourceMap && method.body && method.body !== 'native') putAdds(method.body, node)
+		}
+		for (const field of node.fields ?? []) if (field.value) putAdds(field.value, node)
+	}
+	// lo que esta suelto en el archivo (y los tests y programas, si se incluyen): ahi no hay self
+	for (const pkg of environment.members.filter((member) => !['wollok', 'REPL'].includes(member.name))) {
+		putAdds(pkg, undefined)
+	}
+	for (const { node, owner } of instantiationsOf(environment)) {
+		const className = lastSegment(node.instantiated?.name)
+		for (const namedArgument of node.args ?? []) {
+			putElements(attributeOf(className, namedArgument.name), elementsOf(namedArgument.value), owner, foreignOfOwner(owner))
+		}
+	}
+	// una coleccion que arranca vacia (`const ciudades = #{}`) toma el tipo de lo que
+	// se le agrega, como cuando se escribe con elementos: `Set<springfield>`. Si
+	// despues sus elementos resultan ser de una familia, la etapa 9 lo pasa a la
+	// interfaz (`Set<Ciudad>`).
+	for (const entity of entities) {
+		for (const attribute of entity.attributes) {
+			if (!attribute.elements?.length || !['List', 'Set'].includes(attribute.type)) continue
+			const [first] = attribute.elements
+			attribute.type = `${attribute.type}<${entityAliases.get(first) ?? first}>`
+		}
+	}
 
 	// --- interfaces derivadas ---
 
@@ -454,6 +642,38 @@ export const extractModel = (environment, config = {}, options = {}) => {
 	// color y las interfaces deducidas hablen de las MISMAS familias.
 	familiesOf(model)
 
+	/*
+	 * El tipo de una coleccion sale de su primer elemento (`Set<springfield>`), y
+	 * la etapa 9 lo lleva a la abstraccion de su familia. Eso solo vale si TODOS sus
+	 * elementos son de esa familia: `#{ cuaderno, manzana }` no es un Set de
+	 * cuadernos. Si son de familias distintas, queda la coleccion sin tipo de
+	 * elemento y sin flecha. Un comodin no cuenta: esta en dos lugares, y no dice
+	 * nada de este.
+	 */
+	const family = familiesOf(model)
+	const wildcards = wildcardsOf(model)
+	for (const entity of entities) {
+		for (const attribute of entity.attributes) {
+			const elements = (attribute.elements ?? []).filter((element) => !wildcards.has(element))
+			if (!elements.length || !isCollectionType(attribute.type)) continue
+			const relation = relations.find((candidate) =>
+				candidate.from === entity.name && candidate.fromAttribute === attribute.name)
+			const base = attribute.type.match(/^\w+/)[0]
+			if (new Set(elements.map((element) => family.get(element))).size > 1) {
+				attribute.type = base
+				attribute.isRelation = false
+				if (relation) relations.splice(relations.indexOf(relation), 1)
+				continue
+			}
+			// el primero que no es comodin: `#{ satelital, samsung }` es un Set de celulares
+			const [first] = elements
+			const element = entityAliases.get(first) ?? first
+			if (elementTypeOf(attribute.type) === element) continue
+			attribute.type = `${base}<${element}>`
+			if (relation) relation.to = element
+		}
+	}
+
 	// El que ocupa dos lugares distintos queda afuera de las familias por lugar:
 	// no se puede elegir cual de los dos roles es "el" rol. Conviene decirlo, con
 	// la salida a mano incluida.
@@ -535,6 +755,7 @@ export const extractModel = (environment, config = {}, options = {}) => {
 	// deducidas) y ya se calcularon las familias, que se apoyan en el tipo
 	// concreto para saber quien ocupa el mismo lugar.
 	const abstractionOf = abstractionResolver(entities)
+	const joiners = joinersOf(model)
 	for (const relation of relations) {
 		// solo las que salen de un atributo: una relacion escrita a mano en el
 		// sidecar dice lo que el autor quiso decir y no se toca
@@ -543,10 +764,16 @@ export const extractModel = (environment, config = {}, options = {}) => {
 		// una referencia que ya apuntaba a la abstraccion, o que pasaria a apuntarse
 		// a si misma, se deja como esta
 		if (!abstraction || abstraction === relation.from) continue
-
-		relation.to = abstraction
 		const owner = entities.find((entity) => entity.name === relation.from)
 		const attribute = owner?.attributes.find((candidate) => candidate.name === relation.fromAttribute)
+		// si solo guarda a los que se sumaron por el criterio 4, sigue con su tipo:
+		// `central = centralEolica` le puede pedir agregarTurbina(), y la interfaz
+		// de las centrales no lo tiene
+		const holds = [elementTypeOf(attribute?.type) ?? attribute?.type, ...(attribute?.slotTypes ?? []), ...(attribute?.elements ?? [])]
+			.filter((type) => entitiesByName.has(type))
+		if (holds.length && holds.every((type) => joiners.has(type))) continue
+
+		relation.to = abstraction
 		if (attribute?.type) {
 			// en una coleccion lo que cambia es el tipo de elemento:
 			// List<Pertenencia> -> List<MedidaDeSeguridad>
@@ -570,32 +797,35 @@ export const extractModel = (environment, config = {}, options = {}) => {
 	 *   - no tienen nada en comun: el atributo queda SIN tipo y se avisa por que.
 	 *     Es menos de lo que se quisiera, pero no es mentira.
 	 */
-	const entitiesByName = new Map(entities.map((entity) => [entity.name, entity]))
 	for (const entity of entities) {
 		for (const attribute of entity.attributes) {
 			if (!attribute.typeFromCandidates) continue
 			if (!attribute.slotTypes.includes(attribute.type)) continue
 			const relation = relations.find((candidate) =>
 				candidate.from === entity.name && candidate.fromAttribute === attribute.name)
-			const common = commonSuperclassOf(attribute.slotTypes, entitiesByName)
+			// si lo que recibe son colecciones (`new Region(ciudades = #{...})`), lo que
+			// se compara son sus elementos
+			const collection = attribute.slotTypes.every((type) => isCollectionType(type))
+			const candidates = collection ? attribute.slotTypes.map((type) => elementTypeOf(type) ?? type) : attribute.slotTypes
+			const base = collection ? attribute.slotTypes[0].match(/^\w+/)[0] : undefined
+			const common = commonSuperclassOf(candidates, entitiesByName)
 			if (common) {
-				attribute.type = common
+				attribute.type = collection ? `${base}<${common}>` : common
 				if (relation) relation.to = common
 				continue
 			}
-			attribute.type = undefined
+			attribute.type = base
 			attribute.isRelation = false
 			if (relation) relations.splice(relations.indexOf(relation), 1)
 			// El aviso tiene que decir el motivo verdadero. Que no haya abstraccion no
 			// quiere decir que no se parezcan: pueden ser de la misma familia y no tener
 			// interfaz (con --without-inference, o si uno ya hereda de una clase
 			// concreta). En ese caso lo util es decir como declararla.
-			const family = familiesOf(model)
-			const together = new Set(attribute.slotTypes.map((type) => family.get(type))).size === 1
-				&& attribute.slotTypes.every((type) => family.has(type))
+			const together = new Set(candidates.map((type) => family.get(type))).size === 1
+				&& candidates.every((type) => family.has(type))
 			warnings.push(together
-				? say.polymorphicWithoutAbstraction(entity.name, attribute.name, attribute.slotTypes)
-				: say.notPolymorphic(entity.name, attribute.name, attribute.slotTypes))
+				? say.polymorphicWithoutAbstraction(entity.name, attribute.name, candidates)
+				: say.notPolymorphic(entity.name, attribute.name, candidates))
 		}
 	}
 
@@ -635,7 +865,126 @@ export const extractModel = (environment, config = {}, options = {}) => {
 		}
 	}
 
+	warnings.push(...privateSendsOf({ entities, entityNodes, nodesByName, superclassByName, inheritsFrom, fieldScopeOf: scopeOf, typeOfParameter, typeOf: (expression, scope) => resolver.typeOf(expression, scope), say }))
+
 	return model
+}
+
+/*
+ * --- mensajes privados mandados desde afuera ---
+ *
+ * Wollok no controla @UmlPrivate: `ciudad.aporteContaminante()` desde region anda
+ * igual. Pero el diagrama dice que ese metodo es de uso interno, asi que si otro
+ * objeto se lo manda, el codigo y el diagrama no dicen lo mismo. Se avisa.
+ *
+ * Privado es como en UML: de la CLASE, no del objeto. `self.aporte()` siempre
+ * vale, y tambien `otraCiudad.aporte()` escrito adentro de Ciudad o de una
+ * subclase. Lo que se avisa es que lo mande otra entidad.
+ *
+ * A quien le llega el mensaje se averigua por el receptor:
+ *   - un objeto con nombre (`springfield`, o `const springfield = new Ciudad()`);
+ *   - si no, su tipo, como se tipa todo lo demas: el del atributo, el del
+ *     parametro, el nombre del parametro de un bloque (`{ ciudad => ... }`), lo
+ *     que devuelve un mensaje. Si el tipo es una clase cuenta con sus subclases, y
+ *     si es una interfaz, con quienes la cumplen;
+ *   - si no se sabe, cualquier entidad que defina ese mensaje.
+ * Y solo se avisa si TODOS los que podrian recibirlo lo tienen privado: con uno
+ * solo que lo tenga publico, el envio puede ser a ese, y no hay nada que decir. Un
+ * tipo que no es del diagrama (un numero, una lista) no avisa nunca.
+ */
+const privateSendsOf = ({ entities, entityNodes, nodesByName, superclassByName, inheritsFrom, fieldScopeOf, typeOfParameter, typeOf, say }) => {
+	const selectorOf = (name, arity) => `${name}/${arity}`
+	const isPrivateSomewhere = new Set(entities.flatMap((entity) => entity.operations
+		.filter((operation) => operation.visibility === '-')
+		.map((operation) => selectorOf(operation.name, operation.parameters.length))))
+	if (!isPrivateSomewhere.size) return []
+
+	const entitiesByName = new Map(entities.map((entity) => [entity.name, entity]))
+
+	/** Donde esta definido un mensaje para una entidad (subiendo por la herencia), y si es privado. */
+	const definitionOf = (name, selector) => {
+		for (let current = name; current; current = superclassByName.get(current)) {
+			const entity = entitiesByName.get(current)
+			if (!entity) return undefined
+			if (entity.messages.some((message) => selectorOf(message.name, message.parameters.length) === selector)) {
+				return { owner: current, isPrivate: false }
+			}
+			if (entity.operations.some((operation) => selectorOf(operation.name, operation.parameters.length) === selector)) {
+				return { owner: current, isPrivate: true }
+			}
+		}
+		return undefined
+	}
+
+	/** Las entidades que pueden estar detras de un tipo: la clase y sus subclases, o quienes cumplen la interfaz. */
+	const entitiesOfType = (type) => {
+		const names = entities
+			.filter((entity) => inheritsFrom(entity.name, type) || entity.interfaces.includes(type))
+			.map((entity) => entity.name)
+		return entities
+			.filter((entity) => names.some((name) => inheritsFrom(entity.name, name)))
+			.map((entity) => entity.name)
+	}
+
+	const lastSegment = (name) => name?.split('.').pop()
+
+	/** Quienes pueden recibir un envio a esa expresion; undefined si no se sabe. */
+	const receiversOf = (expression, scope) => {
+		let target
+		try { target = expression?.kind === 'Reference' ? expression.target : undefined } catch { /* no resuelve */ }
+		if (target?.kind === 'Singleton' && nodesByName.has(target.name)) return [target.name]
+		const instantiated = target?.kind === 'Variable' && target.value?.kind === 'New'
+			? lastSegment(target.value.instantiated?.name)
+			: undefined
+		const type = instantiated ?? typeOf(expression, scope)
+		if (!type) return undefined
+		return entitiesOfType(type)
+	}
+
+	/** El envio como se lee en el codigo, para el aviso: `ciudad.aporteContaminante()`. */
+	const textOf = (expression) => {
+		switch (expression?.kind) {
+			case 'Reference': return lastSegment(expression.name)
+			case 'Self': return 'self'
+			case 'New': return `new ${lastSegment(expression.instantiated?.name)}()`
+			case 'Send': return `${textOf(expression.receiver)}.${expression.message}(${expression.args?.length ? '...' : ''})`
+			default: return '...'
+		}
+	}
+
+	const warnings = []
+	const seen = new Set()
+	for (const node of entityNodes) {
+		const sources = [
+			...(node.fields ?? []).map((field) => ({ place: `${node.name}.${field.name}`, root: field.value, scope: fieldScopeOf(node) })),
+			...(node.methods ?? []).filter((method) => method.sourceMap).map((method) => ({
+				place: `${node.name}.${method.name}`,
+				root: method.body,
+				scope: fieldScopeOf(node, new Map((method.parameters ?? []).map((parameter) => [parameter.name, typeOfParameter(parameter)]))),
+			})),
+		]
+		for (const { place, root, scope } of sources) {
+			if (!root || root === 'native') continue
+			for (const send of [root, ...(root.descendants ?? [])]) {
+				if (send.kind !== 'Send' || send.receiver?.kind === 'Self') continue
+				const selector = selectorOf(send.message, (send.args ?? []).length)
+				if (!isPrivateSomewhere.has(selector)) continue
+				const receivers = receiversOf(send.receiver, scope) ?? entities.map((entity) => entity.name)
+				const definitions = receivers.map((name) => definitionOf(name, selector)).filter(Boolean)
+				if (!definitions.length || definitions.some((definition) => !definition.isPrivate)) continue
+				// adentro de la misma clase (o de una subclase) vale: privado es de la clase
+				const owners = [...new Set(definitions.map((definition) => definition.owner))]
+					.filter((owner) => !inheritsFrom(node.name, owner))
+				if (!owners.length) continue
+				const call = textOf(send)
+				const key = `${place}|${call}`
+				if (seen.has(key)) continue
+				seen.add(key)
+				warnings.push(say.privateSentFromOutside(place, call, owners))
+			}
+		}
+	}
+	return warnings
 }
 
 /**

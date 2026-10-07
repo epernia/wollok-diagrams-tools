@@ -7,16 +7,23 @@
  * dibujaba una interfaz si vos la declarabas con @UmlImplements o en el sidecar.
  *
  * Aca se portan los mismos tres criterios, pero leyendo el codigo en vez de
- * ejecutarlo. Dos entidades son de la misma familia si:
+ * ejecutarlo, y se agrega un cuarto. Dos entidades son de la misma familia si:
  *
  *   1. hay herencia, mixin, o las dos declaran la misma interfaz;
  *   2. entienden EXACTAMENTE el mismo conjunto de mensajes;
- *   3. ocupan el mismo lugar, o sea que hay un atributo con el mismo nombre
- *      (`celular` en juliana y en catalina) que en un caso es una y en otro es
- *      la otra — y ademas comparten al menos un mensaje. El lugar se ve en el
- *      valor inicial del atributo, y tambien en como se lo inicializa al crear
- *      el objeto: `new Persona(empresa = personal)` y `new Persona(empresa =
- *      movistar)` ponen a personal y a movistar en el mismo lugar.
+ *   3. ocupan el mismo lugar — y ademas comparten al menos un mensaje. Un lugar
+ *      es un atributo:
+ *        - un atributo con el mismo nombre (`celular` en juliana y en catalina)
+ *          que en un caso es una y en otro es la otra. Se ve en el valor inicial
+ *          y en los `new`: `new Persona(empresa = personal)` y `new
+ *          Persona(empresa = movistar)` ponen a personal y a movistar ahi;
+ *        - los elementos de una misma coleccion: `#{ springfield, albuquerque }`
+ *          (ver `elements` en extract.mjs). Su lugar es el del singular: los
+ *          elementos de `centrales` estan en el mismo lugar que una `central`;
+ *   4. una entidad, o una familia entera, entiende TODO lo que entiende otra
+ *      familia (y quizas mas): centralEolica entiende produccionEnergeticaEn y
+ *      contamina, como las otras centrales, y ademas sabe agregar turbinas. Se la
+ *      puede usar donde se usa cualquiera de ellas, asi que es de la familia.
  *
  * El criterio 3 es mas flojo que el del diagrama de objetos, que puede mirar que
  * paso de verdad en tiempo de ejecucion. Aca solo se ve lo que dice el codigo,
@@ -28,9 +35,25 @@
  * agregar la caja de interfaz que falta (ver derivedInterfacesOf).
  */
 
-/** Los mensajes que entiende una entidad, como `nombre/aridad`. */
+import { singularRoleOf } from './infer.mjs'
+
+/**
+ * Los mensajes que entiende una entidad, como `nombre/aridad`. Sin los @UmlPrivate:
+ * que dos objetos tengan un metodo interno con el mismo nombre no dice que se
+ * puedan usar uno en lugar del otro.
+ */
 const selectorsOf = (entity) =>
-	new Set(entity.operations.map((operation) => `${operation.name}/${operation.parameters.length}`))
+	new Set(entity.operations
+		.filter((operation) => operation.visibility !== '-')
+		.map((operation) => `${operation.name}/${operation.parameters.length}`))
+
+/** Ya cuelga de una abstraccion dibujada: superclase, mixin o interfaz declarada. */
+const hasAbstraction = (entity) =>
+	Boolean(entity.superclass) || entity.mixins.length > 0 || entity.interfaces.length > 0
+
+/** Lo que entienden todas: la interseccion de sus mensajes. */
+const commonProtocolOf = (entities) => entities.map(selectorsOf)
+	.reduce((common, selectors) => new Set([...common].filter((selector) => selectors.has(selector))))
 
 const shareSomeMessage = (a, b) => {
 	const messages = selectorsOf(b)
@@ -56,6 +79,29 @@ const CACHE = new WeakMap()
 
 /** Los comodines que se saltearon, para poder avisar. Ver el criterio 3. */
 const WILDCARDS = new WeakMap()
+
+/** Los que se sumaron a una familia por el criterio 4: no le ponen el nombre. */
+const JOINERS = new WeakMap()
+
+/**
+ * Los que entraron a su familia por el criterio 4. Una referencia que solo guarda
+ * a alguno de ellos sigue con su tipo concreto: `central = centralEolica` le
+ * puede pedir agregarTurbina(), que la interfaz de las centrales no tiene.
+ */
+export const joinersOf = (model) => {
+	familiesOf(model)
+	return JOINERS.get(model) ?? new Set()
+}
+
+/*
+ * Mensajes que no dicen nada del rol: los entiende cualquier objeto, o cualquier
+ * visual de Wollok Game. No alcanzan para que el criterio 4 sume a alguien.
+ */
+const GENERIC_MESSAGES = new Set([
+	'==/1', '!=/1', '===/1', '!==/1', 'equals/1', 'toString/0', 'printString/0', 'identity/0',
+	'className/0', 'kindName/0', 'initialize/0',
+	'position/0', 'image/0', 'text/0', 'textColor/0',
+])
 
 /**
  * Las entidades que ocupan mas de un lugar distinto, con los nombres de esos
@@ -127,14 +173,25 @@ const computeFamilies = (model) => {
 
 	// 3. ocupan el mismo lugar
 	const bySlot = new Map()
+	const place = (slot, name) => {
+		if (!byName.has(name)) return
+		if (!bySlot.has(slot)) bySlot.set(slot, [])
+		bySlot.get(slot).push(name)
+	}
 	for (const entity of entities) {
 		for (const attribute of entity.attributes) {
 			if (attribute.inherited) continue
 			// su tipo, y todo lo que recibe al crear el objeto (ver slotTypes en extract.mjs)
 			for (const type of new Set([attribute.type, ...(attribute.slotTypes ?? [])])) {
 				if (!type || !byName.has(type)) continue
-				bySlot.set(attribute.name, [...(bySlot.get(attribute.name) ?? []), type])
+				place(attribute.name, type)
 			}
+		}
+		// los elementos de una coleccion estan en el lugar de su singular: `centrales`
+		// y `central` son el mismo rol (ver elements en extract.mjs)
+		for (const attribute of entity.attributes) {
+			if (attribute.inherited) continue
+			for (const element of attribute.elements ?? []) place(singularRoleOf(attribute.name) ?? attribute.name, element)
 		}
 	}
 	/*
@@ -158,13 +215,45 @@ const computeFamilies = (model) => {
 	 * nunca agregar una. Un falso positivo cuesta un color de mas, jamas un color
 	 * que miente.
 	 */
+	/*
+	 * Pero dos lugares no siempre son dos roles. samsung puede ser el `celular` de
+	 * juliana y estar tambien en el `stock` de un negocio, con nokia: son dos
+	 * lugares y un solo rol, celular. Lo que distingue a satelital es que sus dos
+	 * lugares piden cosas distintas: llamar y bateria en uno, cobrar en el otro.
+	 *
+	 * Asi que un comodin es el que esta en dos lugares cuyos OTROS inquilinos cumplen
+	 * roles distintos. Que sea el mismo rol se mide por protocolo: lo que entienden
+	 * todos los de un lado lo entienden tambien todos los del otro. No alcanza con
+	 * que compartan UN mensaje: un celular y una empresa pueden tener los dos un
+	 * nombre(), y un prepago que tambien cobra no convierte a movistar en celular.
+	 * Los mensajes que entiende cualquier objeto o cualquier visual no cuentan.
+	 *
+	 * Se comparan solo los que estan en uno de los dos lugares y no en el otro: si
+	 * dos objetos hibridos estan los dos en los dos lugares, cada uno no puede hacer
+	 * de prueba de que el otro no es comodin.
+	 */
 	const slotsOf = new Map()
 	for (const [slot, types] of bySlot) {
 		// un lugar con un solo inquilino no habla de roles
-		if (new Set(types).size < 2) continue
-		for (const type of new Set(types)) slotsOf.set(type, [...(slotsOf.get(type) ?? []), slot])
+		const tenants = new Set(types)
+		if (tenants.size < 2) continue
+		for (const type of tenants) slotsOf.set(type, [...(slotsOf.get(type) ?? []), { slot, tenants }])
 	}
-	const wildcards = new Map([...slotsOf].filter(([, slots]) => slots.length > 1))
+	const roleProtocolOf = (names) =>
+		[...commonProtocolOf(names.map((name) => byName.get(name)))].filter((selector) => !GENERIC_MESSAGES.has(selector))
+	const playsRole = (names, protocol) => protocol.length > 0
+		&& names.every((name) => protocol.every((selector) => selectorsOf(byName.get(name)).has(selector)))
+	const differentRoles = (name, a, b) => {
+		const onlyA = [...a.tenants].filter((tenant) => tenant !== name && !b.tenants.has(tenant))
+		const onlyB = [...b.tenants].filter((tenant) => tenant !== name && !a.tenants.has(tenant))
+		if (!onlyA.length || !onlyB.length) return false
+		// el rol de cada lugar es lo que comparten sus inquilinos, contando al que esta
+		// en los dos: lo que solo sabe hacer iphone (tieneFaceId) no es del rol celular
+		return !playsRole(onlyB, roleProtocolOf([...onlyA, name])) && !playsRole(onlyA, roleProtocolOf([...onlyB, name]))
+	}
+	const wildcards = new Map([...slotsOf]
+		.filter(([name, slots]) => slots.some((a, i) => slots.slice(i + 1).some((b) => differentRoles(name, a, b))))
+		.map(([name, slots]) => [name, slots.map(({ slot }) => slot)]))
 	WILDCARDS.set(model, wildcards)
 
 	for (const types of bySlot.values()) {
@@ -175,6 +264,66 @@ const computeFamilies = (model) => {
 			}
 		}
 	}
+
+	/*
+	 * 4. entiende todo lo que entiende una familia
+	 *
+	 * El criterio 2 pide el MISMO conjunto de mensajes, y eso deja afuera al que
+	 * sabe hacer algo mas: centralEolica entiende produccionEnergeticaEn y
+	 * contamina, como las otras tres centrales, y ademas agregarTurbina. Pero donde
+	 * se usa una central se la puede usar a ella: es polimorfica con las otras.
+	 *
+	 * Vale para una entidad suelta y tambien para una familia entera: si hay dos
+	 * centrales eolicas iguales, ya son una familia entre ellas, y las dos juntas
+	 * entienden todo lo de las otras centrales.
+	 *
+	 * Con resguardos, porque coincidir en nombres de mensajes puede ser casualidad:
+	 *   - solo sin abstraccion (sin superclase, mixin ni interfaz declarada), de los
+	 *     dos lados: si ya hay una, decir quien la cumple es cosa del codigo;
+	 *   - la familia a la que se suma tiene al menos dos miembros, y al menos DOS
+	 *     mensajes en comun que no sean de los que entiende cualquier objeto o
+	 *     cualquier visual de Wollok Game: con uno solo, Turbina (que tambien sabe
+	 *     produccionEnergeticaEn) seria una central, y con position() e image()
+	 *     cualquier personaje seria un obstaculo;
+	 *   - si entra en dos familias que no tienen nada que ver entre si, no se suma a
+	 *     ninguna: haria de puente y las juntaria. Si una es un caso particular de
+	 *     la otra (su protocolo la contiene), se suma, y quedan las tres juntas;
+	 *   - un comodin tampoco se suma, ni la familia donde este: ya se decidio que
+	 *     no tiene un rol solo (dos satelitales iguales son una familia, y entienden
+	 *     lo de un celular, pero tambien son empresas);
+	 *   - una familia que ya cumple un rol propio (un atributo la guarda, como los
+	 *     `habitantes` de una casa) no se suma: tiene su interfaz, y fundirla con la
+	 *     otra perderia los mensajes que solo ella entiende.
+	 * Las familias se miran como quedaron despues del criterio 3, todas a la vez,
+	 * asi el resultado no depende del orden. Y se recuerda quien se sumo asi: el
+	 * nombre de la interfaz lo ponen los de la familia original (ver
+	 * derivedInterfacesOf).
+	 */
+	const groups = new Map()
+	for (const entity of entities) {
+		const root = find(entity.name)
+		groups.set(root, [...(groups.get(root) ?? []), entity])
+	}
+	const units = [...groups.values()]
+		.filter((members) => !members.some((member) => hasAbstraction(member) || wildcards.has(member.name)))
+		.map((members) => ({ root: find(members[0].name), members, protocol: commonProtocolOf(members) }))
+	const hasOwnRole = (unit) => unit.members.length > 1
+		&& roleNamesOf(unit.members.map((member) => member.name), entities, new Set(wildcards.keys())).length > 0
+	const targets = units.filter((unit) => unit.members.length > 1
+		&& [...unit.protocol].filter((selector) => !GENERIC_MESSAGES.has(selector)).length >= 2)
+	const contains = (outer, inner) => [...inner].every((selector) => outer.has(selector))
+	const joins = []
+	const joiners = new Set()
+	for (const unit of units) {
+		if (hasOwnRole(unit)) continue
+		const fits = targets.filter((target) => target !== unit && contains(unit.protocol, target.protocol))
+		const nested = fits.every((a) => fits.every((b) => contains(a.protocol, b.protocol) || contains(b.protocol, a.protocol)))
+		if (!fits.length || !nested) continue
+		for (const target of fits) joins.push([target.root, unit.root])
+		for (const member of unit.members) joiners.add(member.name)
+	}
+	for (const [root, other] of joins) union(root, other)
+	JOINERS.set(model, joiners)
 
 	return new Map(entities.map((entity) => [entity.name, find(entity.name)]))
 }
@@ -243,13 +392,10 @@ export const colorIndexOf = (model) => {
 // ---------- la interfaz que falta ----------
 
 const capitalize = (text) => text.charAt(0).toUpperCase() + text.slice(1)
+const isCollectionType = (type) => /^(List|Set)\b/.test(type ?? '')
 
 /** List<Pertenencia> -> Pertenencia */
 const elementTypeOf = (type) => type?.match(/^\w+<(\w+)>$/)?.[1] ?? type
-
-/** Alguno de la familia ya cuelga de una abstraccion dibujada. */
-const hasAbstraction = (entity) =>
-	Boolean(entity.superclass) || entity.mixins.length > 0 || entity.interfaces.length > 0
 
 /**
  * El nombre de la interfaz sale del ROL que la familia cumple, o sea del nombre
@@ -258,23 +404,41 @@ const hasAbstraction = (entity) =>
  * nombre que le pondria una persona, y sale del codigo — no se inventa.
  *
  * Si la referencian con varios nombres distintos gana el mas usado, y a igualdad
- * el que aparece primero.
+ * el que aparece primero. Devuelve todos, en ese orden: si el primero ya es el
+ * nombre de otra cosa, se prueba con el siguiente.
  */
-const roleNameOf = (members, entities) => {
+const roleNamesOf = (members, entities, ignored = new Set()) => {
 	const family = new Set(members)
+	const entityNames = new Set(entities.map((entity) => entity.name))
 	const counts = new Map()
+	const plurals = new Map()
 	for (const entity of entities) {
 		for (const attribute of entity.attributes) {
 			if (attribute.inherited) continue
-			// cuenta por su tipo o por lo que recibe: `const empresa` no tiene tipo
-			// propio, pero recibe a personal y a movistar
-			const receives = [elementTypeOf(attribute.type), ...(attribute.slotTypes ?? [])]
+			// cuenta por su tipo, por lo que recibe (`const empresa` no tiene tipo
+			// propio, pero recibe a personal y a movistar) y por sus elementos
+			// de una coleccion, lo que se sabe con certeza es lo que tiene adentro; su tipo
+			// sale solo del primer elemento
+			const receives = (attribute.elements?.length
+				? attribute.elements
+				: [elementTypeOf(attribute.type), ...(attribute.slotTypes ?? []).map(elementTypeOf)])
+				.filter((type) => entityNames.has(type) && !ignored.has(type))
 			if (!receives.some((type) => family.has(type))) continue
-			counts.set(attribute.name, (counts.get(attribute.name) ?? 0) + 1)
+			const isCollection = isCollectionType(attribute.type) || Boolean(attribute.elements?.length)
+			// una coleccion mezclada no es el rol de ninguna de las familias que tiene
+			// adentro (un comodin no cuenta: ya se sabe que esta en dos lados)
+			if (isCollection && !receives.every((type) => family.has(type))) continue
+			// una coleccion guarda muchos: `ciudades` es el rol ciudad; un `equipo` no
+			// dice que guarda
+			const name = isCollection ? singularRoleOf(attribute.name) : attribute.name
+			if (!name) continue
+			counts.set(name, (counts.get(name) ?? 0) + 1)
+			if (isCollection && !plurals.has(name)) plurals.set(name, attribute.name)
 		}
 	}
-	if (!counts.size) return undefined
-	return capitalize([...counts].sort((a, b) => b[1] - a[1])[0][0])
+	const ranked = [...counts].sort((a, b) => b[1] - a[1]).map(([name]) => name)
+	// el plural queda de ultimo recurso, por si el singular ya es de otra entidad
+	return [...ranked, ...ranked.filter((name) => plurals.has(name)).map((name) => plurals.get(name))].map(capitalize)
 }
 
 /*
@@ -328,28 +492,43 @@ const parameterRoleNameOf = (group, eligible, parameterRoles, byName) => {
  * @param options.parameterRoles  los roles de los parametros, de extract.mjs
  * @returns [{ name, members, operations }]
  */
+/** Los tipos de Wollok: una interfaz deducida no puede llamarse asi. */
+const WOLLOK_TYPES = ['Object', 'Number', 'String', 'Boolean', 'List', 'Set', 'Dictionary', 'Collection',
+	'Date', 'Range', 'Closure', 'Pair', 'Exception', 'Error']
+
 export const derivedInterfacesOf = (model, { parameterRoles = new Map() } = {}) => {
 	const byName = new Map(model.entities.map((entity) => [entity.name, entity]))
 	const taken = new Set([
 		...model.entities.map((entity) => entity.name),
 		...model.interfaces.map((entity) => entity.name),
+		...WOLLOK_TYPES,
 	])
 
 	const eligible = familyGroupsOf(model).filter((group) =>
 		group.messages.length && !group.members.some((name) => hasAbstraction(byName.get(name))))
 
+	// El nombre lo ponen los de la familia original: el que se sumo por entender
+	// todo (criterio 4) solo cuenta si ellos no tienen ninguno. Una region que
+	// tambien sabe produccionEnergeticaEn no hace que las centrales se llamen Region.
+	const joiners = JOINERS.get(model) ?? new Set()
+	const ignored = new Set(wildcardsOf(model).keys())
+	const namesOf = (group) => {
+		const core = group.members.filter((member) => !joiners.has(member))
+		return roleNamesOf(core.length ? core : group.members, model.entities, ignored)
+	}
+
 	// Primero el nombre por atributo, que es el mas claro. Recien despues, entre las
 	// familias que quedaron SIN nombre, el que sale de un parametro: la ambiguedad
 	// solo se cuenta entre ellas. Una familia que ya se llama Celular por su
 	// atributo no compite por el rol de `unaPersona`, aunque tambien entienda llamar().
-	const byAttribute = new Map(eligible.map((group) => [group, roleNameOf(group.members, model.entities)]))
-	const unnamed = eligible.filter((group) => !byAttribute.get(group))
+	const byAttribute = new Map(eligible.map((group) => [group, namesOf(group)]))
+	const unnamed = eligible.filter((group) => !byAttribute.get(group).length)
 
 	const derived = []
 	for (const group of eligible) {
-		const name = byAttribute.get(group)
-			?? parameterRoleNameOf(group, unnamed, parameterRoles, byName)
-		if (!name || taken.has(name)) continue
+		const candidates = [...byAttribute.get(group), parameterRoleNameOf(group, unnamed, parameterRoles, byName)]
+		const name = candidates.find((candidate) => candidate && !taken.has(candidate))
+		if (!name) continue
 		taken.add(name)
 
 		// Se reusan las operaciones del primer miembro, no se arman de cero: asi la

@@ -36,6 +36,18 @@ export const arg = (node, name, argName) => annotation(node, name)?.args?.[argNa
 
 export const isHidden = (node) => !!annotation(node, 'UmlHide')
 
+/*
+ * Wollok no tiene metodos privados: todos se pueden mandar desde afuera. Pero hay
+ * metodos que son de uso interno (los que el objeto se manda a si mismo para no
+ * repetir una cuenta), y @UmlPrivate los marca asi en el diagrama:
+ *
+ *     @UmlPrivate
+ *     method aporteContaminante() = ...
+ *
+ * Con o sin parentesis: `@UmlPrivate` y `@UmlPrivate()` llegan iguales.
+ */
+export const isPrivate = (node) => !!annotation(node, 'UmlPrivate')
+
 /** Nombres de anotacion que entiende el generador (para avisar de typos). */
 export const KNOWN_ANNOTATIONS = [
 	'UmlType',
@@ -45,6 +57,7 @@ export const KNOWN_ANNOTATIONS = [
 	'UmlNote',
 	'UmlStereotype',
 	'UmlHide',
+	'UmlPrivate',
 ]
 
 /** Anotaciones @Uml... escritas en el codigo que el generador no conoce. */

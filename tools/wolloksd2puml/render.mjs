@@ -16,6 +16,7 @@
 import { entityColorsOf } from '../wollok-uml/entity-colors.mjs'
 import { typeColorOf, valueColorOf, mutabilityColorOf } from '../wollok-uml/palette.mjs'
 import { messagesFor } from '../wollok-uml/i18n.mjs'
+import { relationLabelOf } from '../wollok-uml/relation-labels.mjs'
 
 /** Lo que este modulo escribe por su cuenta en el archivo. Mismas claves en los dos idiomas. */
 const MESSAGES = {
@@ -54,20 +55,32 @@ const SPOTS = {
 	mixin: '<< (M,#8E44AD) mixin >>',
 }
 
+/*
+ * Cada flecha lleva escrito que clase de relacion es: <hereda>, <implementa>,
+ * <conoce>, <usa> (ver relation-labels.mjs). PlantUML muestra el < y el > tal cual,
+ * y si la flecha ya tiene el nombre de la referencia, va en el renglon de abajo:
+ *   Ciudad "1" o--> "*" Central : centrales\n<conoce>
+ */
 const ARROWS = {
-	inheritance: (r) => `${r.from} <|-- ${r.to}`,
-	realization: (r) => `${r.from} <|.. ${r.to}`,
-	mixin: (r) => `${r.from} <|.. ${r.to}`,
-	association: (r) => arrow(r, '-->'),
-	aggregation: (r) => arrow(r, 'o-->'),
-	composition: (r) => arrow(r, '*-->'),
-	dependency: (r) => arrow(r, '..>'),
+	inheritance: (r, kind) => `${r.from} <|-- ${r.to}${captionOf(undefined, kind)}`,
+	realization: (r, kind) => `${r.from} <|.. ${r.to}${captionOf(undefined, kind)}`,
+	mixin: (r, kind) => `${r.from} <|.. ${r.to}${captionOf(undefined, kind)}`,
+	association: (r, kind) => arrow(r, '-->', kind),
+	aggregation: (r, kind) => arrow(r, 'o-->', kind),
+	composition: (r, kind) => arrow(r, '*-->', kind),
+	dependency: (r, kind) => arrow(r, '..>', kind),
 }
 
-const arrow = (relation, symbol) => {
+/** El texto despues de los dos puntos: el nombre, el rotulo, o los dos en dos renglones. */
+const captionOf = (label, kind) => {
+	const lines = [label, kind].filter(Boolean)
+	return lines.length ? ` : ${lines.join('\\n')}` : ''
+}
+
+const arrow = (relation, symbol, kind) => {
 	const from = relation.fromMultiplicity ? `${relation.from} "${relation.fromMultiplicity}"` : relation.from
 	const to = relation.toMultiplicity ? `"${relation.toMultiplicity}" ${relation.to}` : relation.to
-	return `${from} ${symbol} ${to}${relation.label ? ` : ${relation.label}` : ''}`
+	return `${from} ${symbol} ${to}${captionOf(relation.label, kind)}`
 }
 
 /*
@@ -102,6 +115,9 @@ const attributeLine = (attribute, options) => {
  *
  * Con parametros, un espacio adentro de cada parentesis: `volar( kms : Number )`.
  * Sin parametros, pegados: `volar()`.
+ *
+ * Un metodo @UmlPrivate lleva `-` en lugar de `+`. Con classAttributeIconSize 0
+ * PlantUML lo escribe tal cual, igual que en los atributos.
  */
 const OVERRIDE_MARK = '⬆️'
 
@@ -111,7 +127,7 @@ const operationLine = (operation, showOverride) => {
 		.join(', ')
 	const returns = operation.returns ? ` : ${typeText(operation.returns)}` : ''
 	const mark = showOverride && operation.override ? `${OVERRIDE_MARK} ` : ''
-	return `    ${mark}+ ${operation.name}(${parameters ? ` ${parameters} ` : ''})${returns}`
+	return `    ${mark}${operation.visibility ?? '+'} ${operation.name}(${parameters ? ` ${parameters} ` : ''})${returns}`
 }
 
 /*
@@ -206,9 +222,9 @@ export const renderPlantUML = (model, options = {}) => {
 		const links = settings.associations === 'attribute'
 			? []
 			: model.relations.filter((r) => !isStructural(r))
-		for (const relation of links) lines.push(renderRelation(relation))
+		for (const relation of links) lines.push(renderRelation(relation, settings.language))
 		if (links.length && structural.length) lines.push('')
-		for (const relation of structural) lines.push(renderRelation(relation))
+		for (const relation of structural) lines.push(renderRelation(relation, settings.language))
 		lines.push('')
 	}
 
@@ -221,4 +237,5 @@ export const renderPlantUML = (model, options = {}) => {
 	return lines.join('\n') + '\n'
 }
 
-const renderRelation = (relation) => (ARROWS[relation.kind] ?? ARROWS.association)(relation)
+const renderRelation = (relation, language) =>
+	(ARROWS[relation.kind] ?? ARROWS.association)(relation, relationLabelOf(relation.kind, language))

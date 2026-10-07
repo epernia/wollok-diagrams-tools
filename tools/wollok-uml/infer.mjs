@@ -34,7 +34,17 @@ const LIST_MESSAGES = new Set([
 ])
 const ADD_MESSAGES = new Set(['add', 'addAll', 'push'])
 
-const ARTICLES = ['un', 'una', 'unos', 'unas', 'el', 'la', 'los', 'las', 'mi', 'su', 'otro', 'otra', 'nuevo', 'nueva']
+/*
+ * Mensajes que, SOBRE UNA COLECCION, devuelven uno de sus elementos y no un numero:
+ * `centrales.max({ central => central.produccionPara(self) })` devuelve una central.
+ *
+ * Que el receptor sea una coleccion es lo que los distingue: `5.max(3)` y
+ * `diametro.min(tamanio)` son numeros y siguen valiendo Number.
+ */
+const ELEMENT_MESSAGES = new Set(['max', 'min', 'anyOne', 'find', 'findOrDefault', 'findOrElse', 'first', 'last', 'head'])
+
+const ARTICLES = ['un', 'una', 'unos', 'unas', 'el', 'la', 'los', 'las', 'mi', 'mis', 'tu', 'tus', 'su', 'sus',
+	'otro', 'otra', 'otros', 'otras', 'nuevo', 'nueva', 'a', 'an', 'the', 'my', 'some', 'other', 'another']
 
 const decapitalize = (s) => s.charAt(0).toLowerCase() + s.slice(1)
 
@@ -50,6 +60,68 @@ export const withoutArticle = (name) => {
 }
 
 const singular = (name) => (name.endsWith('s') && name.length > 3 ? name.slice(0, -1) : name)
+
+/**
+ * El singular en castellano, para NOMBRAR un rol a partir de una coleccion:
+ * `ciudades` guarda ciudades, asi que el rol es Ciudad.
+ *
+ *   ciudades -> ciudad    centrales -> central   camiones -> camion
+ *   luces -> luz          turbinas -> turbina    nombres -> nombre
+ *   paises -> pais
+ *
+ * Un sustantivo que termina en consonante hace el plural con -es, y en castellano
+ * esa consonante es casi siempre d, l, n, r o y, despues de una vocal. Si no, el
+ * plural es con -s (nombres: la r va despues de una b, asi que es nombre-s).
+ * Es una regla, no un diccionario: `meses` da `mese` y `cines` da `cin`. Por eso
+ * el nombre de una interfaz deducida es una sugerencia: si no te gusta, declarala
+ * con @UmlImplements y el nombre lo elegis vos.
+ *
+ * No reemplaza a `singular`, que se usa para TIPAR por el nombre: ahi un plural
+ * mal cortado no encuentra ninguna entidad y no pasa nada, pero uno bien cortado
+ * le daria tipo de elemento a una coleccion.
+ */
+export const singularOf = (name) => {
+	if (!name.endsWith('s') || name.length <= 3) return name
+	if (/[aeiouáéíóú]ces$/i.test(name)) return `${name.slice(0, -3)}z`
+	if (/[aeiouáéíóú][dlnry]es$/i.test(name)) return name.slice(0, -2)
+	if (/[aeiou][aeiou]ses$/i.test(name)) return name.slice(0, -2)
+	return name.slice(0, -1)
+}
+
+const ROLE_DETERMINERS = ['todos', 'todas', 'todo', 'toda', 'all', 'every']
+const ROLE_PREPOSITIONS = ['de', 'del', 'con', 'en', 'para', 'por', 'sin', 'of', 'in', 'with', 'for']
+
+/**
+ * El rol de una coleccion: lo que guarda, en singular. undefined si el nombre no
+ * dice que guarda.
+ *
+ *   ciudades -> ciudad              ciudadesVisitadas -> ciudadVisitada
+ *   misCiudades -> ciudad           todasLasCiudades -> ciudad
+ *   ciudadesDelPais -> ciudadDelPais (lo que va despues de "de" queda como esta)
+ *   listaDeCiudades -> ciudad       (lista no es plural: es el contenedor)
+ *   equipo, flota, stock -> undefined (un sustantivo colectivo no nombra a sus
+ *                                      elementos: un jugador no es un equipo)
+ */
+export const singularRoleOf = (name) => {
+	let rest = name
+	for (let previous; previous !== rest;) {
+		previous = rest
+		rest = withoutArticle(rest)
+		const determiner = ROLE_DETERMINERS.find((word) => rest.startsWith(word) && /[A-Z]/.test(rest[word.length] ?? ''))
+		if (determiner) rest = decapitalize(rest.slice(determiner.length))
+	}
+	const words = rest.split(/(?=[A-Z])/)
+	const preposition = words.findIndex((word, index) => index > 0 && ROLE_PREPOSITIONS.includes(word.toLowerCase()))
+	const head = preposition < 0 ? words : words.slice(0, preposition)
+	const tail = preposition < 0 ? [] : words.slice(preposition)
+	const singular = head.map((word) => {
+		const cut = singularOf(word.toLowerCase())
+		return word[0] === word[0].toUpperCase() ? cut.charAt(0).toUpperCase() + cut.slice(1) : cut
+	})
+	if (singular.join('') !== head.join('')) return decapitalize([...singular, ...tail].join(''))
+	// no habia nada en plural: o es un contenedor (`listaDeCiudades`), o un colectivo
+	return tail.length > 1 ? singularRoleOf(decapitalize(tail.slice(1).join(''))) : undefined
+}
 
 /*
  * --- nombres que hablan de una cantidad o de una unidad: Number ---
@@ -239,6 +311,12 @@ export const createTypeResolver = ({ entityNames, entityAliases = new Map(), dic
 			const argumentType = typeOf(send.args?.[0], scope, seen)
 			return receiverType === 'String' || argumentType === 'String' ? 'String' : 'Number'
 		}
+		// el elemento que sale de una coleccion vale lo que valen sus elementos; si no
+		// se sabe de que son, mejor sin tipo que con uno inventado
+		if (ELEMENT_MESSAGES.has(message)) {
+			const collection = typeOf(send.receiver, scope, seen)
+			if (isCollectionType(collection)) return elementTypeOf(collection)
+		}
 		if (NUMBER_MESSAGES.has(message)) return 'Number'
 		if (BOOLEAN_MESSAGES.has(message)) return 'Boolean'
 		if (STRING_MESSAGES.has(message)) return 'String'
@@ -270,7 +348,9 @@ export const createTypeResolver = ({ entityNames, entityAliases = new Map(), dic
 					localTypes.set(parameter.name, typeFromDictionary(parameter.name) ?? typeFromName(parameter.name))
 				}
 				const found = typeOf(send.args?.[0], { ...scope, localTypes })
-				if (found) return found
+				// addAll recibe una coleccion: el elemento es lo que tiene adentro
+				const element = send.message === 'addAll' ? elementTypeOf(found) : found
+				if (element) return element
 			}
 		}
 		return undefined
